@@ -54,6 +54,65 @@ def get_lead_by_name(name):
     return row
 
 
+def mark_stale_leads_followup_due():
+    """
+    Auto-promote any quoted/new lead whose follow_up_after has passed
+    to 'followup_due'. Returns count of updated rows.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE leads
+        SET status = 'followup_due'
+        WHERE status IN ('new', 'quoted')
+          AND follow_up_after < datetime('now')
+        """
+    )
+    updated = cur.rowcount
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def update_lead_status(lead_id, status, lost_reason=None, lost_reason_notes=None):
+    """Update the status (and optionally lost_reason) of a lead."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE leads
+        SET status = ?,
+            lost_reason = ?,
+            lost_reason_notes = ?
+        WHERE id = ?
+        """,
+        (status, lost_reason, lost_reason_notes, lead_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_pipeline_summary():
+    """Return counts and total quote value by status."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            status,
+            COUNT(*) as count,
+            COALESCE(SUM(quote_amount), 0) as total_quoted
+        FROM leads
+        GROUP BY status
+        ORDER BY status
+        """
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 def get_all_active_leads():
     """All leads not in won/lost state."""
     conn = get_conn()

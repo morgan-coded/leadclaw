@@ -10,7 +10,12 @@ def draft_followup(lead: dict) -> str:
     Generate a follow-up message for a lead using Claude.
     lead should be a dict (or sqlite3.Row converted to dict).
     """
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "ANTHROPIC_API_KEY not set. Run: export ANTHROPIC_API_KEY=your_key"
+        )
+    client = anthropic.Anthropic(api_key=api_key)
 
     name = lead["name"]
     service = lead["service"] or "your service request"
