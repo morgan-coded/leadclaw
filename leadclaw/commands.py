@@ -2,6 +2,7 @@
 commands.py - CLI entry point using argparse
 """
 import argparse
+import os
 import sys
 from datetime import datetime
 from typing import Optional
@@ -45,6 +46,7 @@ from leadclaw.queries import (
     get_pipeline_summary,
     get_stale_leads,
     get_today_leads,
+    import_leads_from_rows,
     mark_lost,
     mark_stale_leads_followup_due,
     mark_won,
@@ -379,6 +381,50 @@ def cmd_pipeline(args):
         print(result)
 
 
+def cmd_import(args):
+    """Import leads from a CSV file."""
+    import csv
+
+    path = args.file
+    if not os.path.exists(path):
+        print(f"File not found: {path}")
+        return
+
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            print("CSV appears empty or has no header row.")
+            return
+
+        # Normalize header names: lowercase + strip whitespace
+        reader.fieldnames = [h.strip().lower() for h in reader.fieldnames]
+
+        required = {"name", "service"}
+        missing = required - set(reader.fieldnames)
+        if missing:
+            print(f"CSV is missing required column(s): {', '.join(sorted(missing))}")
+            print("Required: name, service")
+            print("Optional: phone, email, notes, followup_days")
+            return
+
+        rows = list(reader)
+
+    if not rows:
+        print("CSV has a header row but no data rows.")
+        return
+
+    if not args.yes:
+        confirm = input(f"Import {len(rows)} row(s) from {path}? (yes/no): ").strip().lower()
+        if confirm != "yes":
+            print("Cancelled.")
+            return
+
+    result = import_leads_from_rows(rows)
+    print(f"Imported {result['imported']} lead(s), skipped {result['skipped']}.")
+    for err in result["errors"]:
+        print(f"  ! {err}")
+
+
 def cmd_export(args):
     """Export all leads to CSV."""
     import csv
@@ -481,6 +527,19 @@ def build_parser():
     p_export = sub.add_parser("export", help="Export all leads to CSV")
     p_export.add_argument("--output", "-o", default=None, help="Output file (default: leads_export.csv)")
 
+    p_import = sub.add_parser(
+        "import",
+        help="Import leads from a CSV file",
+        epilog=(
+            "Required columns: name, service\n"
+            "Optional columns: phone, email, notes, followup_days\n"
+            "Example: leadclaw import leads.csv"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_import.add_argument("file", help="Path to CSV file")
+    p_import.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
     return parser
 
 
@@ -500,6 +559,7 @@ COMMAND_MAP = {
     "digest": cmd_digest,
     "pipeline": cmd_pipeline,
     "export": cmd_export,
+    "import": cmd_import,
 }
 
 

@@ -12,6 +12,7 @@ from leadclaw.commands import (
     build_parser,
     cmd_digest,
     cmd_export,
+    cmd_import,
     cmd_list,
     cmd_quote,
     cmd_won,
@@ -176,6 +177,50 @@ def test_cmd_digest_output(capsys):
 # ---------------------------------------------------------------------------
 # cmd_export tests
 # ---------------------------------------------------------------------------
+
+def test_cmd_import_valid_csv(tmp_path, capsys):
+    csv_content = "name,service,phone,notes\nImport Lead,painting,555-9999,test note\n"
+    csv_file = tmp_path / "import.csv"
+    csv_file.write_text(csv_content)
+    parser = build_parser()
+    args = parser.parse_args(["import", "--yes", str(csv_file)])
+    cmd_import(args)
+    out = capsys.readouterr().out
+    assert "Imported 1" in out
+    lead, _ = queries.get_lead_by_name("Import Lead")
+    assert lead is not None
+    assert lead["service"] == "painting"
+
+
+def test_cmd_import_missing_required_column(tmp_path, capsys):
+    csv_file = tmp_path / "bad.csv"
+    csv_file.write_text("phone,notes\n555-0000,no name or service\n")
+    parser = build_parser()
+    args = parser.parse_args(["import", "--yes", str(csv_file)])
+    cmd_import(args)
+    out = capsys.readouterr().out
+    assert "missing required column" in out
+
+
+def test_cmd_import_file_not_found(tmp_path, capsys):
+    parser = build_parser()
+    args = parser.parse_args(["import", "--yes", str(tmp_path / "nonexistent.csv")])
+    cmd_import(args)
+    out = capsys.readouterr().out
+    assert "File not found" in out
+
+
+def test_cmd_import_skips_rows_missing_name(tmp_path, capsys):
+    csv_content = "name,service\nGood Lead,roofing\n,painting\n"
+    csv_file = tmp_path / "partial.csv"
+    csv_file.write_text(csv_content)
+    parser = build_parser()
+    args = parser.parse_args(["import", "--yes", str(csv_file)])
+    cmd_import(args)
+    out = capsys.readouterr().out
+    assert "Imported 1" in out
+    assert "skipped 1" in out
+
 
 def test_cmd_export_creates_file(tmp_path):
     queries.add_lead("Export Me", "painting")

@@ -88,5 +88,5 @@ See [PILOT.md](PILOT.md) for the pilot user onboarding guide.
 - [x] Week 3 — quote tracking, won/lost, AI lead summaries, pipeline analysis
 - [x] Week 4 — landing page, pilot user guide
 - [x] Packaging — real `leadclaw` console entry point (pip installable)
-- [ ] OpenClaw integration — `/digest`, `/lead`, `/draft-followup` as chat commands
+- [x] OpenClaw integration — `digest`, `lead`, `draft-followup`, and more as chat commands
 - [ ] Week 5+ — CSV import, web UI, SMS integration

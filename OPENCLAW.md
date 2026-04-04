@@ -95,6 +95,25 @@ Say any of these naturally — the skill matches on intent, not exact phrasing.
 
 ---
 
+### `draft-followup <name>` — AI-drafted follow-up text
+
+> "draft followup for Carlos" / "write a follow-up for Beth" / "draft text for [name]"
+
+```
+Drafting follow-up for Carlos Mendez...
+
+--- Draft ---
+Hey Carlos, just wanted to follow up on the tree trimming quote I sent over.
+I know the one near the power line is a priority — I can work around your
+schedule and have a crew out within the week. Let me know if $600 still works
+for you or if you have any questions.
+```
+
+> Requires `ANTHROPIC_API_KEY` in `.env`. Without it, the command will prompt
+> you to add the key.
+
+---
+
 ## Other commands available from chat
 
 | Say | Runs |

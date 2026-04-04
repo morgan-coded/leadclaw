@@ -242,6 +242,42 @@ def mark_lost(lead_id: int, reason: str, notes: Optional[str] = None):
         )
 
 
+def import_leads_from_rows(rows: list) -> dict:
+    """
+    Bulk-insert leads from a list of dicts (pre-validated CSV rows).
+    Returns {imported, skipped, errors} summary.
+    """
+    imported = 0
+    skipped = 0
+    errors = []
+
+    for i, row in enumerate(rows):
+        name = (row.get("name") or "").strip()
+        service = (row.get("service") or "").strip()
+        if not name or not service:
+            errors.append(f"Row {i + 1}: missing name or service — skipped")
+            skipped += 1
+            continue
+        phone = (row.get("phone") or "").strip() or None
+        email = (row.get("email") or "").strip() or None
+        notes = (row.get("notes") or "").strip() or None
+        try:
+            followup_days = int(row.get("followup_days") or DEFAULT_FOLLOWUP_DAYS)
+            if followup_days < 0:
+                followup_days = DEFAULT_FOLLOWUP_DAYS
+        except (ValueError, TypeError):
+            followup_days = DEFAULT_FOLLOWUP_DAYS
+        try:
+            add_lead(name, service, phone=phone, email=email,
+                     notes=notes, followup_days=followup_days)
+            imported += 1
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"Row {i + 1} ({name}): {e}")
+            skipped += 1
+
+    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
 def mark_stale_leads_followup_due() -> int:
     """Auto-promote overdue new/quoted leads to followup_due. Returns count updated."""
     with get_conn() as conn:
