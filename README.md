@@ -61,6 +61,7 @@ leadclaw digest        # first look at your pipeline
 | `leadclaw/drafting.py` | Claude-powered follow-up drafts + summaries |
 | `leadclaw/seed.py` | Demo data seeder (`leadclaw-seed` command) |
 | `leadclaw/scheduler.py` | Daily digest runner (`leadclaw-scheduler` command) |
+| `leadclaw/web.py` | Web dashboard server (`leadclaw-web` command) |
 | `leadclaw/config.py` | Shared constants (status labels, lost reasons, limits) |
 | `pyproject.toml` | Package definition + entry points |
 | `tests/` | pytest suite |
