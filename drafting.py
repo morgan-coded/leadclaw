@@ -2,13 +2,15 @@
 drafting.py - Claude-powered drafts and summaries
 """
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Optional
+
 import anthropic
+
 from config import MODEL
 
 # Singleton client — created once, reused across calls
-from typing import Optional
-_client: "Optional[anthropic.Anthropic]" = None
+_client: Optional[anthropic.Anthropic] = None
 
 
 def get_client() -> anthropic.Anthropic:
@@ -17,15 +19,21 @@ def get_client() -> anthropic.Anthropic:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise EnvironmentError(
-                "ANTHROPIC_API_KEY not set. Run: export ANTHROPIC_API_KEY=your_key\n"
-                "Or add it to a .env file in the project root."
+                "ANTHROPIC_API_KEY not set.\n"
+                "Copy .env.example to .env and add your key, or run:\n"
+                "  export ANTHROPIC_API_KEY=your_key_here"
             )
         _client = anthropic.Anthropic(api_key=api_key)
     return _client
 
 
-def _call(prompt: str, max_tokens: int = 300) -> str:
-    """Make an API call with unified error handling."""
+def check_api_key() -> bool:
+    """Return True if API key is present, False otherwise (no exception)."""
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def _call(prompt: str, max_tokens: int = 300) -> Optional[str]:
+    """Make an API call. Returns None on error (caller decides what to do)."""
     try:
         msg = get_client().messages.create(
             model=MODEL,
@@ -33,28 +41,36 @@ def _call(prompt: str, max_tokens: int = 300) -> str:
             messages=[{"role": "user", "content": prompt}],
         )
         return msg.content[0].text.strip()
+    except EnvironmentError as e:
+        print(f"❌ {e}")
+        return None
     except anthropic.AuthenticationError:
-        raise SystemExit("❌ Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.")
+        print("❌ Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.")
+        return None
     except anthropic.RateLimitError:
-        raise SystemExit("❌ Anthropic rate limit hit. Wait a moment and try again.")
+        print("❌ Anthropic rate limit hit. Wait a moment and try again.")
+        return None
     except anthropic.APIConnectionError:
-        raise SystemExit("❌ Could not reach Anthropic API. Check your internet connection.")
+        print("❌ Could not reach Anthropic API. Check your internet connection.")
+        return None
     except anthropic.APIError as e:
-        raise SystemExit(f"❌ Anthropic API error: {e}")
+        print(f"❌ Anthropic API error: {e}")
+        return None
 
 
-def _days_overdue(lead: dict):
-    if not lead.get("follow_up_after"):
+def _days_overdue(lead: dict) -> Optional[int]:
+    raw = lead.get("follow_up_after")
+    if not raw:
         return None
     try:
-        due = datetime.strptime(str(lead["follow_up_after"])[:19], "%Y-%m-%d %H:%M:%S")
+        due = datetime.fromisoformat(str(raw).replace(" ", "T").split(".")[0])
         delta = (datetime.now() - due).days
         return delta if delta > 0 else None
-    except ValueError:
+    except (ValueError, TypeError):
         return None
 
 
-def draft_followup(lead: dict) -> str:
+def draft_followup(lead: dict) -> Optional[str]:
     name = lead["name"]
     service = lead.get("service") or "your service request"
     status = lead["status"]
@@ -79,21 +95,16 @@ def draft_followup(lead: dict) -> str:
     else:
         tone = "Check in naturally. Short and friendly."
 
-    prompt = f"""
-You are writing a short follow-up text message for a local service business owner.
-
-Lead context:
-{chr(10).join(context_lines)}
-
-Tone: {tone}
-
-Rules: 2-4 sentences. Sound like a real person. No subject lines, sign-offs, or placeholders.
-""".strip()
-
+    prompt = (
+        "You are writing a short follow-up text message for a local service business owner.\n\n"
+        f"Lead context:\n{chr(10).join(context_lines)}\n\n"
+        f"Tone: {tone}\n\n"
+        "Rules: 2-4 sentences. Sound like a real person. No subject lines, sign-offs, or placeholders."
+    )
     return _call(prompt, max_tokens=256)
 
 
-def summarize_lead(lead: dict) -> str:
+def summarize_lead(lead: dict) -> Optional[str]:
     overdue = _days_overdue(lead)
     fields = [
         f"Name: {lead['name']}",
@@ -108,50 +119,48 @@ def summarize_lead(lead: dict) -> str:
     if overdue:
         fields.append(f"Days overdue: {overdue}")
 
-    prompt = f"""
-Summarize this lead for a small business owner in 2-3 sentences.
-Be concrete and actionable — what's the situation and what should they do next?
-
-{chr(10).join(fields)}
-""".strip()
-
+    prompt = (
+        "Summarize this lead for a small business owner in 2-3 sentences.\n"
+        "Be concrete and actionable — what's the situation and what should they do next?\n\n"
+        + "\n".join(fields)
+    )
     return _call(prompt, max_tokens=200)
 
 
-def summarize_pipeline(leads: list, summary_rows: list) -> str:
+def summarize_pipeline(leads: list, summary_rows: list) -> Optional[str]:
     status_counts = {row["status"]: row["count"] for row in summary_rows}
     open_statuses = {"new", "quoted", "followup_due"}
     total_value = sum(
         row["total_quoted"] for row in summary_rows if row["status"] in open_statuses
     )
-    stale = [l for l in leads if l["status"] == "followup_due"]
+    stale = [lead for lead in leads if lead["status"] == "followup_due"]
     high_value = sorted(
-        [l for l in leads if l.get("quote_amount")],
+        [lead for lead in leads if lead.get("quote_amount")],
         key=lambda x: x["quote_amount"],
         reverse=True,
     )[:3]
 
-    context = f"""
-Pipeline snapshot:
-- New: {status_counts.get('new', 0)}
-- Quoted: {status_counts.get('quoted', 0)}
-- Follow-up due: {status_counts.get('followup_due', 0)}
-- Won: {status_counts.get('won', 0)}
-- Lost: {status_counts.get('lost', 0)}
-- Open pipeline value: ${total_value:,.0f}
-- Stale leads: {len(stale)}
+    hv_lines = "\n".join(
+        f"  - {lead['name']}: ${lead['quote_amount']:.0f} ({lead['service']})"
+        for lead in high_value
+    ) or "  none"
 
-Top opportunities:
-{chr(10).join(f"  - {l['name']}: ${l['quote_amount']:.0f} ({l['service']})" for l in high_value) or '  none'}
-""".strip()
+    context = (
+        "Pipeline snapshot:\n"
+        f"- New: {status_counts.get('new', 0)}\n"
+        f"- Quoted: {status_counts.get('quoted', 0)}\n"
+        f"- Follow-up due: {status_counts.get('followup_due', 0)}\n"
+        f"- Won: {status_counts.get('won', 0)}\n"
+        f"- Lost: {status_counts.get('lost', 0)}\n"
+        f"- Open pipeline value: ${total_value:,.0f}\n"
+        f"- Stale leads: {len(stale)}\n\n"
+        f"Top opportunities:\n{hv_lines}"
+    )
 
-    prompt = f"""
-You are advising a local service business owner on their sales pipeline.
-
-{context}
-
-Write 3-5 sentences: overall health, what to prioritize today, any patterns worth noting.
-Be direct and practical — no fluff.
-""".strip()
-
+    prompt = (
+        "You are advising a local service business owner on their sales pipeline.\n\n"
+        f"{context}\n\n"
+        "Write 3-5 sentences: overall health, what to prioritize today, any patterns worth noting.\n"
+        "Be direct and practical — no fluff."
+    )
     return _call(prompt, max_tokens=300)

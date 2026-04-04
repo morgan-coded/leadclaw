@@ -1,14 +1,21 @@
 """
 queries.py - Core SQL queries for lead commands
+
+Note on update_lead: the SET clause is built from an allowlisted dict, not raw user input.
+The allowlist (`allowed` set) prevents SQL injection — only whitelisted column names
+can appear in the query. Values are always passed as parameterized bindings.
 """
-from db import get_conn
-from config import DEFAULT_FOLLOWUP_DAYS
 from datetime import datetime
+from typing import Optional
+
+from config import DEFAULT_FOLLOWUP_DAYS
+from db import get_conn
 
 
 # ---------------------------------------------------------------------------
 # Read queries
 # ---------------------------------------------------------------------------
+
 
 def get_today_leads():
     """Active leads created today or with a follow_up_after of today."""
@@ -40,10 +47,11 @@ def get_stale_leads():
     return rows
 
 
-def get_lead_by_name(name):
+def get_lead_by_name(name: str):
     """
     Find leads by case-insensitive partial match.
-    Returns (matched_lead, all_matches) — warns caller if multiple hits.
+    Escapes % and _ to prevent unbounded LIKE matches.
+    Returns (best_match_or_None, all_matches_list).
     """
     safe = name.replace("%", r"\%").replace("_", r"\_")
     with get_conn() as conn:
@@ -56,7 +64,7 @@ def get_lead_by_name(name):
     return rows[0], rows
 
 
-def get_lead_by_id(lead_id):
+def get_lead_by_id(lead_id: int):
     with get_conn() as conn:
         return conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
 
@@ -74,11 +82,12 @@ def get_all_active_leads():
     return rows
 
 
-def get_all_leads():
-    """Every lead, all statuses."""
+def get_all_leads(limit: int = 200, offset: int = 0):
+    """Every lead, all statuses, with pagination."""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM leads ORDER BY created_at DESC"
+            "SELECT * FROM leads ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         ).fetchall()
     return rows
 
@@ -134,9 +143,16 @@ def get_closed_summary():
 # Write queries
 # ---------------------------------------------------------------------------
 
-def add_lead(name, service, phone=None, email=None, notes=None,
-             followup_days=DEFAULT_FOLLOWUP_DAYS):
-    """Insert a new lead. Warns if a matching name already exists."""
+
+def add_lead(
+    name: str,
+    service: str,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    notes: Optional[str] = None,
+    followup_days: int = DEFAULT_FOLLOWUP_DAYS,
+):
+    """Insert a new lead. Also returns existing leads with the exact same name (duplicate warning)."""
     _, existing = get_lead_by_name(name)
     duplicates = [r for r in existing if r["name"].lower() == name.lower()]
 
@@ -157,10 +173,11 @@ def add_lead(name, service, phone=None, email=None, notes=None,
     return lead_id, duplicates
 
 
-def update_lead(lead_id, **fields):
+def update_lead(lead_id: int, **fields):
     """
-    Generic field updater. Only updates keys that are passed in.
-    Allowed fields: name, phone, email, service, notes, follow_up_after
+    Generic field updater. Only fields in `allowed` can be updated.
+    The SET clause is built from the allowlist (not raw user input),
+    so column names are safe. Values are always parameterized.
     """
     allowed = {"name", "phone", "email", "service", "notes", "follow_up_after"}
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -169,18 +186,18 @@ def update_lead(lead_id, **fields):
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     with get_conn() as conn:
         conn.execute(
-            f"UPDATE leads SET {set_clause} WHERE id = ?",
+            f"UPDATE leads SET {set_clause} WHERE id = ?",  # noqa: S608 — safe, allowlisted
             (*updates.values(), lead_id),
         )
 
 
-def delete_lead(lead_id):
+def delete_lead(lead_id: int):
     with get_conn() as conn:
         conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
 
 
-def update_quote(lead_id, amount, followup_days=DEFAULT_FOLLOWUP_DAYS):
-    """Set/update quote, log contact time, schedule next follow-up."""
+def update_quote(lead_id: int, amount: float, followup_days: int = DEFAULT_FOLLOWUP_DAYS):
+    """Set/update quote, log contact time, and schedule next follow-up."""
     with get_conn() as conn:
         conn.execute(
             """
@@ -195,7 +212,7 @@ def update_quote(lead_id, amount, followup_days=DEFAULT_FOLLOWUP_DAYS):
         )
 
 
-def mark_won(lead_id):
+def mark_won(lead_id: int):
     with get_conn() as conn:
         conn.execute(
             """
@@ -209,7 +226,7 @@ def mark_won(lead_id):
         )
 
 
-def mark_lost(lead_id, reason, notes=None):
+def mark_lost(lead_id: int, reason: str, notes: Optional[str] = None):
     with get_conn() as conn:
         conn.execute(
             """
@@ -225,8 +242,8 @@ def mark_lost(lead_id, reason, notes=None):
         )
 
 
-def mark_stale_leads_followup_due():
-    """Auto-promote overdue new/quoted leads to followup_due. Returns count."""
+def mark_stale_leads_followup_due() -> int:
+    """Auto-promote overdue new/quoted leads to followup_due. Returns count updated."""
     with get_conn() as conn:
         cur = conn.execute(
             """

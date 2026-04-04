@@ -1,8 +1,8 @@
 """
 db.py - Database connection and initialization
 """
-import sqlite3
 import os
+import sqlite3
 from contextlib import contextmanager
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
@@ -37,10 +37,10 @@ def init_db():
             phone             TEXT,
             email             TEXT,
             service           TEXT,
-            status            TEXT NOT NULL CHECK(status IN ('new', 'quoted', 'followup_due', 'won', 'lost')),
+            status            TEXT NOT NULL CHECK(status IN ('new','quoted','followup_due','won','lost')),
             lost_reason       TEXT CHECK(lost_reason IN (
-                                  'price', 'timing', 'went_competitor',
-                                  'no_response', 'not_qualified', 'service_area', 'other'
+                                  'price','timing','went_competitor',
+                                  'no_response','not_qualified','service_area','other'
                               )),
             lost_reason_notes TEXT,
             quote_amount      REAL,

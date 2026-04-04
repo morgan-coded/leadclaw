@@ -3,22 +3,42 @@ commands.py - CLI entry point using argparse
 """
 import sys
 import argparse
-from queries import (
-    get_today_leads, get_stale_leads, get_lead_by_name, get_lead_by_id,
-    get_all_active_leads, get_all_leads, get_pipeline_summary, get_closed_summary,
-    add_lead, update_lead, delete_lead, update_quote, mark_won, mark_lost,
-    mark_stale_leads_followup_due,
+from typing import Optional
+
+from config import (
+    DEFAULT_FOLLOWUP_DAYS,
+    LOST_REASONS,
+    MAX_FIELD_LENGTH,
+    MAX_NAME_LENGTH,
+    STATUS_LABELS,
 )
-from drafting import draft_followup, summarize_lead, summarize_pipeline
-from config import STATUS_LABELS, LOST_REASONS, DEFAULT_FOLLOWUP_DAYS
+from drafting import check_api_key, draft_followup, summarize_lead, summarize_pipeline
+from queries import (
+    add_lead,
+    delete_lead,
+    get_all_active_leads,
+    get_all_leads,
+    get_closed_summary,
+    get_lead_by_id,
+    get_lead_by_name,
+    get_pipeline_summary,
+    get_stale_leads,
+    get_today_leads,
+    mark_lost,
+    mark_stale_leads_followup_due,
+    mark_won,
+    update_lead,
+    update_quote,
+)
 
 
 # ---------------------------------------------------------------------------
 # Display helpers
 # ---------------------------------------------------------------------------
 
-def fmt_lead(lead):
-    emoji = STATUS_LABELS.get(lead["status"], "❓").split()[0]
+
+def fmt_lead(lead) -> str:
+    emoji = STATUS_LABELS.get(lead["status"], "?").split()[0]
     lines = [f"{emoji} [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'}"]
     lines.append(f"   Status: {lead['status']}")
     if lead["quote_amount"]:
@@ -48,27 +68,60 @@ def print_pipeline_summary(summary, totals):
     print(f"  Lost (closed):  ${totals['lost_value']:,.0f}")
 
 
-def resolve_lead(name):
-    """
-    Resolve a name to a single lead. Warns if multiple matches found.
-    Returns lead row or None.
-    """
+def resolve_lead(name: str, lead_id: Optional[int] = None):
+    """Resolve name or id to a single lead, with disambiguation warning."""
+    if lead_id:
+        lead = get_lead_by_id(lead_id)
+        if not lead:
+            print(f"No lead found with id {lead_id}.")
+        return lead
+    if not name:
+        print("Provide a name or --id.")
+        return None
     lead, all_matches = get_lead_by_name(name)
     if not lead:
         print(f"No lead found matching '{name}'.")
         return None
     if len(all_matches) > 1:
-        print(f"⚠️  Multiple matches for '{name}':")
-        for m in all_matches:
-            print(f"   [{m['id']}] {m['name']} — {m['service'] or 'N/A'} ({m['status']})")
+        print(f"Multiple matches for '{name}':")
+        for match in all_matches:
+            print(f"   [{match['id']}] {match['name']} — {match['service'] or 'N/A'} ({match['status']})")
         print(f"   Using most recent: [{lead['id']}] {lead['name']}")
-        print(f"   (Use --id <id> if you want a different one)\n")
+        print(f"   Tip: use --id <id> to be explicit.\n")
     return lead
+
+
+def _prompt_str(label: str, current: str = "", required: bool = False, max_len: int = MAX_FIELD_LENGTH) -> Optional[str]:
+    """Prompt for a string field with optional validation."""
+    while True:
+        val = input(f"  {label}: ").strip()
+        if not val:
+            if required:
+                print("  This field is required.")
+                continue
+            return None
+        if len(val) > max_len:
+            print(f"  Max {max_len} characters.")
+            continue
+        return val
+
+
+def _prompt_int(label: str, default: int, min_val: int = 0) -> int:
+    """Prompt for a positive integer with a default."""
+    while True:
+        raw = input(f"  {label} [{default}]: ").strip()
+        if not raw:
+            return default
+        if not raw.lstrip("-").isdigit() or int(raw) < min_val:
+            print(f"  Enter a whole number >= {min_val}.")
+            continue
+        return int(raw)
 
 
 # ---------------------------------------------------------------------------
 # Command handlers
 # ---------------------------------------------------------------------------
+
 
 def cmd_today(args):
     leads = get_today_leads()
@@ -84,7 +137,7 @@ def cmd_today(args):
 def cmd_stale(args):
     leads = get_stale_leads()
     if not leads:
-        print("No stale leads. You're on top of it. ✅")
+        print("No stale leads. You're on top of it.")
         return
     print(f"=== Stale Leads ({len(leads)}) ===\n")
     for lead in leads:
@@ -93,65 +146,54 @@ def cmd_stale(args):
 
 
 def cmd_list(args):
-    leads = get_all_leads() if args.all else get_all_active_leads()
+    limit = getattr(args, "limit", 50)
+    offset = getattr(args, "offset", 0)
+    if args.all:
+        leads = get_all_leads(limit=limit, offset=offset)
+        label = "All Leads"
+    else:
+        leads = get_all_active_leads()
+        label = "Active Leads"
     if not leads:
         print("No leads found.")
         return
-    label = "All Leads" if args.all else "Active Leads"
     print(f"=== {label} ({len(leads)}) ===\n")
     for lead in leads:
         print(fmt_lead(lead))
         print()
+    if args.all and len(leads) == limit:
+        print(f"  Showing {limit} rows. Use --offset {offset + limit} for more.")
 
 
 def cmd_lead(args):
-    if args.id:
-        lead = get_lead_by_id(args.id)
-        if not lead:
-            print(f"No lead found with id {args.id}.")
-            return
-    else:
-        lead = resolve_lead(args.name)
-        if not lead:
-            return
-    print(fmt_lead(lead))
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
+    if lead:
+        print(fmt_lead(lead))
 
 
 def cmd_add(args):
     print("=== Add New Lead ===")
-    name = input("Name: ").strip()
-    if not name:
-        print("Name is required.")
-        return
-    service = input("Service requested: ").strip()
-    phone = input("Phone (optional): ").strip() or None
-    email = input("Email (optional): ").strip() or None
-    notes = input("Notes (optional): ").strip() or None
-    days_str = input(f"Follow up in how many days? [{DEFAULT_FOLLOWUP_DAYS}]: ").strip()
-    if days_str and not days_str.lstrip("-").isdigit():
-        print(f"Invalid number '{days_str}', using {DEFAULT_FOLLOWUP_DAYS} days.")
-        followup_days = DEFAULT_FOLLOWUP_DAYS
-    elif days_str and int(days_str) < 0:
-        print(f"Negative follow-up days not allowed, using {DEFAULT_FOLLOWUP_DAYS}.")
-        followup_days = DEFAULT_FOLLOWUP_DAYS
-    else:
-        followup_days = int(days_str) if days_str else DEFAULT_FOLLOWUP_DAYS
+    name = _prompt_str("Name", required=True, max_len=MAX_NAME_LENGTH)
+    service = _prompt_str("Service requested", required=True)
+    phone = _prompt_str("Phone (optional)")
+    email = _prompt_str("Email (optional)")
+    notes = _prompt_str("Notes (optional)")
+    followup_days = _prompt_int(f"Follow up in how many days?", DEFAULT_FOLLOWUP_DAYS, min_val=0)
 
     lead_id, dupes = add_lead(name, service, phone=phone, email=email,
                                notes=notes, followup_days=followup_days)
     if dupes:
-        print(f"\n⚠️  Warning: {len(dupes)} existing lead(s) with similar name:")
-        for d in dupes:
-            print(f"   [{d['id']}] {d['name']} — {d['service'] or 'N/A'} ({d['status']})")
-    print(f"\n✅ Lead added (id={lead_id}) — follow-up in {followup_days} day(s).")
+        print(f"\nWarning: {len(dupes)} existing lead(s) with same name:")
+        for dup in dupes:
+            print(f"   [{dup['id']}] {dup['name']} — {dup['service'] or 'N/A'} ({dup['status']})")
+    print(f"\nLead added (id={lead_id}) — follow-up in {followup_days} day(s).")
 
 
 def cmd_edit(args):
-    lead = resolve_lead(args.name) if not args.id else get_lead_by_id(args.id)
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
-        print(f"No lead found.")
         return
-    print(f"Editing [{lead['id']}] {lead['name']} (leave blank to keep current value)\n")
+    print(f"Editing [{lead['id']}] {lead['name']} (leave blank to keep current)\n")
 
     fields = {}
     for field, label in [
@@ -164,17 +206,20 @@ def cmd_edit(args):
     ]:
         val = input(f"  {label}: ").strip()
         if val:
+            if len(val) > MAX_FIELD_LENGTH:
+                print(f"  Skipping {field} — too long (max {MAX_FIELD_LENGTH} chars).")
+                continue
             fields[field] = val
 
     if not fields:
         print("No changes made.")
         return
     update_lead(lead["id"], **fields)
-    print(f"✅ Updated {len(fields)} field(s) on [{lead['id']}] {lead['name']}.")
+    print(f"Updated {len(fields)} field(s) on [{lead['id']}] {lead['name']}.")
 
 
 def cmd_delete(args):
-    lead = resolve_lead(args.name) if not args.id else get_lead_by_id(args.id)
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
     confirm = input(f"Delete [{lead['id']}] {lead['name']}? This cannot be undone. (yes/no): ").strip().lower()
@@ -182,59 +227,75 @@ def cmd_delete(args):
         print("Cancelled.")
         return
     delete_lead(lead["id"])
-    print(f"🗑️  Deleted [{lead['id']}] {lead['name']}.")
+    print(f"Deleted [{lead['id']}] {lead['name']}.")
 
 
 def cmd_quote(args):
-    lead = resolve_lead(args.name) if not args.id else get_lead_by_id(args.id)
+    if args.amount <= 0:
+        print("Quote amount must be greater than zero.")
+        return
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
     update_quote(lead["id"], args.amount)
-    print(f"✅ [{lead['id']}] {lead['name']} — quote set to ${args.amount:,.0f}, follow-up in {DEFAULT_FOLLOWUP_DAYS} days.")
+    print(f"[{lead['id']}] {lead['name']} — quote set to ${args.amount:,.0f}, follow-up in {DEFAULT_FOLLOWUP_DAYS} days.")
 
 
 def cmd_won(args):
-    lead = resolve_lead(args.name) if not args.id else get_lead_by_id(args.id)
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
     mark_won(lead["id"])
-    print(f"✅ [{lead['id']}] {lead['name']} marked as WON 🎉")
+    print(f"[{lead['id']}] {lead['name']} marked as WON")
 
 
 def cmd_lost(args):
-    lead = resolve_lead(args.name) if not args.id else get_lead_by_id(args.id)
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
     notes = None
     if args.reason == "other":
-        notes = input("Notes for 'other' reason (required): ").strip() or None
+        while True:
+            notes = input("Notes for 'other' reason (required): ").strip()
+            if notes:
+                break
+            print("Notes are required when reason is 'other'.")
     mark_lost(lead["id"], args.reason, notes=notes)
-    print(f"❌ [{lead['id']}] {lead['name']} marked as LOST — reason: {args.reason}")
+    print(f"[{lead['id']}] {lead['name']} marked as LOST — reason: {args.reason}")
 
 
 def cmd_draft(args):
-    lead = resolve_lead(args.name) if not args.id else get_lead_by_id(args.id)
+    if not check_api_key():
+        print("ANTHROPIC_API_KEY not set. Copy .env.example to .env and add your key.")
+        return
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
     print(f"Drafting follow-up for {lead['name']}...\n")
     draft = draft_followup(dict(lead))
-    print("--- Draft ---")
-    print(draft)
+    if draft:
+        print("--- Draft ---")
+        print(draft)
 
 
 def cmd_summarize(args):
-    lead = resolve_lead(args.name) if not args.id else get_lead_by_id(args.id)
+    if not check_api_key():
+        print("ANTHROPIC_API_KEY not set. Copy .env.example to .env and add your key.")
+        return
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
     print(fmt_lead(lead))
     print("\n--- AI Summary ---")
-    print(summarize_lead(dict(lead)))
+    result = summarize_lead(dict(lead))
+    if result:
+        print(result)
 
 
 def cmd_digest(args):
     promoted = mark_stale_leads_followup_due()
     if promoted:
-        print(f"⚡ Auto-promoted {promoted} lead(s) to followup_due\n")
+        print(f"Auto-promoted {promoted} lead(s) to followup_due\n")
 
     summary, totals = get_pipeline_summary()
     print("=== Pipeline Digest ===")
@@ -244,12 +305,18 @@ def cmd_digest(args):
     if stale:
         print(f"\n=== Needs Action ({len(stale)}) ===")
         for lead in stale[:5]:
-            print(f"  🔔 {lead['name']} — {lead['service'] or 'N/A'} (due {str(lead['follow_up_after'])[:10]})")
+            print(f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} (due {str(lead['follow_up_after'])[:10]})")
         if len(stale) > 5:
             print(f"  ... and {len(stale) - 5} more")
 
+    if not check_api_key():
+        print("\n(AI analysis unavailable — ANTHROPIC_API_KEY not set)")
+
 
 def cmd_pipeline(args):
+    if not check_api_key():
+        print("ANTHROPIC_API_KEY not set. Copy .env.example to .env and add your key.")
+        return
     leads = [dict(r) for r in get_all_active_leads()]
     summary, totals = get_pipeline_summary()
     closed, loss_reasons = get_closed_summary()
@@ -263,12 +330,39 @@ def cmd_pipeline(args):
             print(f"  {row['lost_reason']}: {row['count']}")
 
     print("\n--- AI Analysis ---")
-    print(summarize_pipeline(leads, list(summary)))
+    result = summarize_pipeline(leads, list(summary))
+    if result:
+        print(result)
+
+
+def cmd_export(args):
+    """Export all leads to CSV."""
+    import csv
+    import io
+
+    leads = get_all_leads(limit=100000)
+    if not leads:
+        print("No leads to export.")
+        return
+
+    out = args.output or "leads_export.csv"
+    fields = ["id", "name", "phone", "email", "service", "status",
+              "lost_reason", "lost_reason_notes", "quote_amount",
+              "created_at", "last_contact_at", "follow_up_after", "notes"]
+
+    with open(out, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        for lead in leads:
+            writer.writerow(dict(lead))
+
+    print(f"Exported {len(leads)} leads to {out}")
 
 
 # ---------------------------------------------------------------------------
 # CLI setup
 # ---------------------------------------------------------------------------
+
 
 def build_parser():
     parser = argparse.ArgumentParser(
@@ -277,66 +371,71 @@ def build_parser():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # today
     sub.add_parser("today", help="Leads due today")
-
-    # stale
     sub.add_parser("stale", help="Overdue follow-ups")
 
-    # list
-    p_list = sub.add_parser("list", help="List all active leads (--all for everything)")
+    p_list = sub.add_parser("list", help="List leads")
     p_list.add_argument("--all", action="store_true", help="Include won/lost leads")
+    p_list.add_argument("--limit", type=int, default=50, help="Max rows (default 50)")
+    p_list.add_argument("--offset", type=int, default=0, help="Row offset for pagination")
 
-    # lead
-    p_lead = sub.add_parser("lead", help="Look up a lead by name")
+    p_lead = sub.add_parser("lead", help="Look up a lead",
+                             epilog="Examples:\n  leadclaw lead Mike\n  leadclaw lead --id 7",
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
     p_lead.add_argument("name", nargs="?", default="")
-    p_lead.add_argument("--id", type=int, help="Look up by lead ID instead")
+    p_lead.add_argument("--id", type=int, help="Look up by lead ID")
 
-    # add
     sub.add_parser("add", help="Add a new lead (interactive)")
 
-    # edit
-    p_edit = sub.add_parser("edit", help="Edit a lead's fields (interactive)")
+    p_edit = sub.add_parser("edit", help="Edit a lead (interactive)",
+                             epilog="Examples:\n  leadclaw edit Mike\n  leadclaw edit --id 7",
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
     p_edit.add_argument("name", nargs="?", default="")
     p_edit.add_argument("--id", type=int)
 
-    # delete
-    p_del = sub.add_parser("delete", help="Delete a lead")
+    p_del = sub.add_parser("delete", help="Delete a lead",
+                            epilog="Examples:\n  leadclaw delete Mike\n  leadclaw delete --id 7",
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
     p_del.add_argument("name", nargs="?", default="")
     p_del.add_argument("--id", type=int)
 
-    # quote
-    p_quote = sub.add_parser("quote", help="Set or update a quote amount")
+    p_quote = sub.add_parser("quote", help="Set a quote amount",
+                              epilog="Examples:\n  leadclaw quote Mike 850\n  leadclaw quote --id 7 850",
+                              formatter_class=argparse.RawDescriptionHelpFormatter)
     p_quote.add_argument("name", nargs="?", default="")
-    p_quote.add_argument("amount", type=float)
+    p_quote.add_argument("amount", type=float, help="Quote amount (must be > 0)")
     p_quote.add_argument("--id", type=int)
 
-    # won
-    p_won = sub.add_parser("won", help="Mark a lead as won")
+    p_won = sub.add_parser("won", help="Mark a lead as won",
+                            epilog="Examples:\n  leadclaw won Mike\n  leadclaw won --id 7",
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
     p_won.add_argument("name", nargs="?", default="")
     p_won.add_argument("--id", type=int)
 
-    # lost
-    p_lost = sub.add_parser("lost", help="Mark a lead as lost")
+    p_lost = sub.add_parser("lost", help="Mark a lead as lost",
+                             epilog=f"Reasons: {', '.join(LOST_REASONS)}\nExamples:\n  leadclaw lost Mike price\n  leadclaw lost --id 7 other",
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
     p_lost.add_argument("name", nargs="?", default="")
     p_lost.add_argument("reason", choices=LOST_REASONS)
     p_lost.add_argument("--id", type=int)
 
-    # draft-followup
-    p_draft = sub.add_parser("draft-followup", help="Draft a follow-up text via AI")
+    p_draft = sub.add_parser("draft-followup", help="Draft a follow-up text via AI",
+                              epilog="Examples:\n  leadclaw draft-followup Mike\n  leadclaw draft-followup --id 7",
+                              formatter_class=argparse.RawDescriptionHelpFormatter)
     p_draft.add_argument("name", nargs="?", default="")
     p_draft.add_argument("--id", type=int)
 
-    # summarize
-    p_sum = sub.add_parser("summarize", help="AI summary of a lead")
+    p_sum = sub.add_parser("summarize", help="AI summary of a lead",
+                            epilog="Examples:\n  leadclaw summarize Mike\n  leadclaw summarize --id 7",
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
     p_sum.add_argument("name", nargs="?", default="")
     p_sum.add_argument("--id", type=int)
 
-    # digest
     sub.add_parser("digest", help="Pipeline snapshot + promote stale leads")
-
-    # pipeline
     sub.add_parser("pipeline", help="Full AI pipeline analysis")
+
+    p_export = sub.add_parser("export", help="Export all leads to CSV")
+    p_export.add_argument("--output", "-o", default=None, help="Output file (default: leads_export.csv)")
 
     return parser
 
@@ -356,6 +455,7 @@ COMMAND_MAP = {
     "summarize": cmd_summarize,
     "digest": cmd_digest,
     "pipeline": cmd_pipeline,
+    "export": cmd_export,
 }
 
 
@@ -369,7 +469,7 @@ def main():
     except SystemExit:
         raise
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        print(f"Unexpected error: {e}")
         sys.exit(1)
 
 
