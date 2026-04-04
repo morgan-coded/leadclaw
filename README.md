@@ -41,6 +41,7 @@ leadclaw digest        # first look at your pipeline
 | `digest` | Pipeline snapshot + auto-promote stale leads |
 | `pipeline` | Full AI pipeline analysis |
 | `export [--output file]` | Export all leads to CSV |
+| `import <file> [--yes]` | Import leads from a CSV file |
 
 ### Global flags
 
@@ -89,4 +90,5 @@ See [PILOT.md](PILOT.md) for the pilot user onboarding guide.
 - [x] Week 4 — landing page, pilot user guide
 - [x] Packaging — real `leadclaw` console entry point (pip installable)
 - [x] OpenClaw integration — `digest`, `lead`, `draft-followup`, and more as chat commands
-- [ ] Week 5+ — CSV import, web UI, SMS integration
+- [x] CSV import — `leadclaw import <file>` with column validation and partial-row handling
+- [ ] Week 5+ — web UI, SMS integration
