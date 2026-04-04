@@ -1,0 +1,31 @@
+"""
+config.py - Shared constants and configuration
+"""
+import os
+
+# Load .env if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# AI model — override with LEADCLAW_MODEL env var
+MODEL = os.getenv("LEADCLAW_MODEL", "claude-3-5-haiku-20241022")
+
+# Shared status display labels
+STATUS_LABELS = {
+    "new": "🆕 New",
+    "quoted": "💬 Quoted",
+    "followup_due": "🔔 Follow-up Due",
+    "won": "✅ Won",
+    "lost": "❌ Lost",
+}
+
+# Valid loss reasons
+LOST_REASONS = [
+    "price", "timing", "went_competitor",
+    "no_response", "not_qualified", "service_area", "other",
+]
+
+DEFAULT_FOLLOWUP_DAYS = 3

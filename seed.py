@@ -6,7 +6,10 @@ from datetime import datetime, timedelta
 
 
 def seed():
-    conn = get_conn()
+    from db import DB_PATH
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
     # Wipe existing seed data
