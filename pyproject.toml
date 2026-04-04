@@ -16,6 +16,7 @@ dependencies = [
 leadclaw = "leadclaw.commands:main"
 leadclaw-seed = "leadclaw.seed:main"
 leadclaw-scheduler = "leadclaw.scheduler:main"
+leadclaw-web = "leadclaw.web:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

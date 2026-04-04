@@ -91,4 +91,5 @@ See [PILOT.md](PILOT.md) for the pilot user onboarding guide.
 - [x] Packaging — real `leadclaw` console entry point (pip installable)
 - [x] OpenClaw integration — `digest`, `lead`, `draft-followup`, and more as chat commands
 - [x] CSV import — `leadclaw import <file>` with column validation and partial-row handling
-- [ ] Week 5+ — web UI, SMS integration
+- [x] Web dashboard — `leadclaw-web` read-only pipeline view (no extra dependencies)
+- [ ] Week 5+ — web UI write actions (add/edit/delete in browser), SMS integration
