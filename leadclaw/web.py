@@ -2,13 +2,20 @@
 web.py - Full CRUD web dashboard (no extra dependencies)
 
 Usage:
-    leadclaw-web            # serves on http://localhost:7432
+    leadclaw-web                    # http://localhost:7432 (localhost only)
     leadclaw-web --port 8080
-    leadclaw-web --host 0.0.0.0 --port 8080
+    leadclaw-web --host 0.0.0.0     # bind all interfaces (trusted LAN only)
+
+Security model:
+    Default bind is 127.0.0.1 — localhost only, no auth required.
+    Binding to 0.0.0.0 exposes unauthenticated write endpoints to your network.
+    For any exposure beyond localhost, put Nginx/Caddy in front with HTTP Basic Auth.
+    See OPENCLAW.md for deployment and backup guidance.
 
 API endpoints (JSON):
     GET  /api/summary
     GET  /api/leads/<id>
+    GET  /api/closed
     POST /api/leads              { name, service, phone?, email?, notes?, followup_days? }
     POST /api/leads/<id>/edit    { name?, service?, phone?, email?, notes?, follow_up_after? }
     POST /api/leads/<id>/quote   { amount }
@@ -21,15 +28,22 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 
-from leadclaw.config import DEFAULT_FOLLOWUP_DAYS, LOST_REASONS, MAX_FIELD_LENGTH, MAX_NAME_LENGTH
+from leadclaw.config import (
+    DEFAULT_FOLLOWUP_DAYS,
+    LOST_REASONS,
+    MAX_FIELD_LENGTH,
+    MAX_NAME_LENGTH,
+)
 from leadclaw.db import init_db
 from leadclaw.queries import (
     add_lead,
     delete_lead,
     get_all_active_leads,
+    get_all_leads,
     get_lead_by_id,
     get_pipeline_summary,
     get_stale_leads,
@@ -41,6 +55,23 @@ from leadclaw.queries import (
 )
 
 DEFAULT_PORT = 7432
+
+# ---------------------------------------------------------------------------
+# Validation helpers (mirrors CLI)
+# ---------------------------------------------------------------------------
+
+
+def _valid_email(val: str) -> bool:
+    return "@" in val and "." in val.split("@")[-1]
+
+
+def _valid_date(val: str) -> bool:
+    try:
+        datetime.strptime(val, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # JSON API helpers
@@ -59,6 +90,7 @@ def _lead_to_dict(row) -> dict:
         "follow_up_after": str(row["follow_up_after"])[:10] if row["follow_up_after"] else None,
         "notes": row["notes"],
         "lost_reason": row["lost_reason"],
+        "lost_reason_notes": row["lost_reason_notes"] if "lost_reason_notes" in row.keys() else None,
     }
 
 
@@ -82,11 +114,21 @@ def api_summary() -> dict:
     }
 
 
+def api_closed() -> dict:
+    """All won/lost leads for the closed-leads browser view."""
+    all_leads = get_all_leads(limit=10000)
+    closed = [_lead_to_dict(r) for r in all_leads
+              if r["status"] in ("won", "lost")]
+    return {"closed": closed}
+
+
 # ---------------------------------------------------------------------------
 # HTML dashboard
 # ---------------------------------------------------------------------------
 
 _LOST_REASONS_JS = json.dumps(LOST_REASONS)
+_MAX_NAME_JS = MAX_NAME_LENGTH
+_MAX_FIELD_JS = MAX_FIELD_LENGTH
 
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -95,14 +137,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LeadClaw</title>
 <style>
-  :root {
-    --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2a2d3a;
-    --text:#e8eaf0;--muted:#6b7280;--accent:#6366f1;--accent-h:#4f52d1;
-    --green:#22c55e;--yellow:#f59e0b;--red:#ef4444;
-  }
+  :root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2a2d3a;--text:#e8eaf0;--muted:#6b7280;--accent:#6366f1;--accent-h:#4f52d1;--green:#22c55e;--yellow:#f59e0b;--red:#ef4444;}
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;}
-  header{padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;}
+  header{padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
   header h1{font-size:18px;font-weight:700;letter-spacing:-.3px;}
   header span{color:var(--muted);font-size:12px;}
   .btn{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s;}
@@ -112,6 +150,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .btn-sm{padding:3px 8px;font-size:11px;}
   .btn-danger{color:var(--red)!important;}
   .btn-danger:hover{border-color:var(--red)!important;}
+  .btn-active{border-color:var(--accent);color:var(--accent);}
   .ml-auto{margin-left:auto;}
   .main{padding:24px;max-width:1140px;margin:0 auto;}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:28px;}
@@ -120,6 +159,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .card .value{font-size:24px;font-weight:700;}
   .card .sub{font-size:11px;color:var(--muted);margin-top:1px;}
   .green{color:var(--green);}.yellow{color:var(--yellow);}.red{color:var(--red);}.accent{color:var(--accent);}
+  .tabs{display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0;}
+  .tab{padding:6px 14px;cursor:pointer;border-bottom:2px solid transparent;font-size:13px;color:var(--muted);transition:all .15s;margin-bottom:-1px;}
+  .tab.active{color:var(--text);border-color:var(--accent);}
+  .tab-panel{display:none;}.tab-panel.active{display:block;}
   section{margin-bottom:28px;}
   section h2{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;}
   .lead-list{display:flex;flex-direction:column;gap:7px;}
@@ -128,7 +171,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .lead-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .lead-name{font-weight:600;}
   .lead-service{color:var(--muted);font-size:12px;margin-top:1px;}
-  .lead-contact{color:var(--muted);font-size:11px;}
   .lead-notes{color:#9ca3af;font-size:11px;margin-top:2px;}
   .lead-actions{display:flex;gap:5px;flex-shrink:0;align-items:flex-start;flex-wrap:wrap;justify-content:flex-end;}
   .lead-meta{font-size:11px;color:var(--muted);text-align:right;}
@@ -139,6 +181,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .badge-won{background:#0d3321;color:#22c55e;}
   .badge-lost{background:#3b0d0d;color:#ef4444;}
   .empty{color:var(--muted);font-style:italic;padding:10px 0;}
+  .warn-banner{background:#2a1a0a;border:1px solid #7c4a00;border-radius:7px;padding:10px 14px;font-size:12px;color:#f59e0b;margin-bottom:16px;}
   /* Modal */
   .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;}
   .overlay.open{display:flex;}
@@ -165,23 +208,36 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </header>
 <div class="main">
   <div class="cards" id="cards"></div>
-  <section><h2>Due Today</h2><div class="lead-list" id="today"></div></section>
-  <section><h2>Needs Action (Overdue)</h2><div class="lead-list" id="stale"></div></section>
-  <section><h2>Full Pipeline</h2><div class="lead-list" id="active"></div></section>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('pipeline')">Pipeline</div>
+    <div class="tab" onclick="switchTab('closed')">Closed</div>
+  </div>
+
+  <div class="tab-panel active" id="tab-pipeline">
+    <section><h2>Due Today</h2><div class="lead-list" id="today"></div></section>
+    <section><h2>Needs Action (Overdue)</h2><div class="lead-list" id="stale"></div></section>
+    <section><h2>Full Pipeline</h2><div class="lead-list" id="active"></div></section>
+  </div>
+
+  <div class="tab-panel" id="tab-closed">
+    <section><h2>Won &amp; Lost</h2><div class="lead-list" id="closed"></div></section>
+  </div>
 </div>
 
 <!-- Add/Edit modal -->
 <div class="overlay" id="modal-edit" onclick="closeModal(event)">
   <div class="modal">
     <h3 id="modal-title">Add Lead</h3>
+    <div id="dup-warn" class="warn-banner" style="display:none"></div>
     <input type="hidden" id="edit-id">
-    <div class="form-group"><label>Name *</label><input id="edit-name" placeholder="Full name"></div>
-    <div class="form-group"><label>Service *</label><input id="edit-service" placeholder="What they need"></div>
-    <div class="form-group"><label>Phone</label><input id="edit-phone" placeholder="555-000-0000" type="tel"></div>
-    <div class="form-group"><label>Email</label><input id="edit-email" placeholder="email@example.com" type="email"></div>
+    <div class="form-group"><label>Name *</label><input id="edit-name" placeholder="Full name" maxlength="100"></div>
+    <div class="form-group"><label>Service *</label><input id="edit-service" placeholder="What they need" maxlength="500"></div>
+    <div class="form-group"><label>Phone</label><input id="edit-phone" placeholder="555-000-0000" type="tel" maxlength="500"></div>
+    <div class="form-group"><label>Email</label><input id="edit-email" placeholder="email@example.com" type="email" maxlength="500"></div>
     <div class="form-group" id="fg-followup"><label>Follow-up in (days)</label><input id="edit-followup" type="number" min="0" value="3"></div>
     <div class="form-group" id="fg-followup-date" style="display:none"><label>Follow-up date</label><input id="edit-followup-date" type="date"></div>
-    <div class="form-group"><label>Notes</label><textarea id="edit-notes" rows="2"></textarea></div>
+    <div class="form-group"><label>Notes</label><textarea id="edit-notes" rows="2" maxlength="500"></textarea></div>
     <div class="err" id="edit-err"></div>
     <div class="modal-footer">
       <button class="btn" onclick="closeOverlay('modal-edit')">Cancel</button>
@@ -209,10 +265,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="modal">
     <h3>Mark Lost</h3>
     <input type="hidden" id="lost-id">
-    <div class="form-group">
-      <label>Reason</label>
-      <select id="lost-reason"></select>
-    </div>
+    <div class="form-group"><label>Reason</label><select id="lost-reason"></select></div>
     <div class="form-group" id="lost-notes-group" style="display:none">
       <label>Notes (required for "other")</label>
       <textarea id="lost-notes" rows="2"></textarea>
@@ -228,44 +281,59 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="toast" id="toast"></div>
 
 <script>
-const LOST_REASONS = """ + _LOST_REASONS_JS + """;
+const LOST_REASONS=""" + _LOST_REASONS_JS + """;
+const MAX_NAME=""" + str(_MAX_NAME_JS) + """;
+const MAX_FIELD=""" + str(_MAX_FIELD_JS) + r""";
 
 // Populate lost reason select
-const sel = document.getElementById('lost-reason');
-LOST_REASONS.forEach(r => { const o = document.createElement('option'); o.value = r; o.textContent = r.replace('_',' '); sel.appendChild(o); });
-sel.addEventListener('change', () => {
-  document.getElementById('lost-notes-group').style.display = sel.value === 'other' ? '' : 'none';
-});
+(function(){
+  const sel=document.getElementById('lost-reason');
+  LOST_REASONS.forEach(r=>{const o=document.createElement('option');o.value=r;o.textContent=r.replace(/_/g,' ');sel.appendChild(o);});
+  sel.addEventListener('change',()=>{document.getElementById('lost-notes-group').style.display=sel.value==='other'?'':'none';});
+})();
 
 function fmt(n){return n==null?'—':'$'+Number(n).toLocaleString(undefined,{maximumFractionDigits:0});}
 function badge(s){return `<span class="badge badge-${s}">${s.replace(/_/g,' ')}</span>`;}
-function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):''}
+function esc(s){return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'):''}
 
-function toast(msg, err=false){
+function toast(msg,err=false){
   const t=document.getElementById('toast');
-  t.textContent=msg; t.style.borderColor=err?'var(--red)':'var(--border)';
-  t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500);
+  t.textContent=msg;t.style.borderColor=err?'var(--red)':'var(--border)';
+  t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);
 }
 
-function renderLead(l){
+// ---- Client-side validation (mirrors server) ----
+function validEmail(v){return v.includes('@')&&v.split('@').pop().includes('.');}
+function validDate(v){return /^\d{4}-\d{2}-\d{2}$/.test(v)&&!isNaN(Date.parse(v));}
+
+// ---- Tabs ----
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['pipeline','closed'][i]===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));
+  if(name==='closed')loadClosed();
+}
+
+// ---- Render ----
+function renderLead(l,showActions=true){
   const due=l.follow_up_after?`<div class="lead-meta ${l.status==='followup_due'?'yellow':''}">${l.follow_up_after}</div>`:'';
   const quote=l.quote_amount?`<div class="lead-meta">${fmt(l.quote_amount)}</div>`:'';
   const contact=[l.phone,l.email].filter(Boolean).join(' · ');
-  const active=!['won','lost'].includes(l.status);
-  const actions=active?`
+  const isActive=!['won','lost'].includes(l.status);
+  const lj=esc(JSON.stringify(l));
+  const actions=showActions?(isActive?`
     <button class="btn btn-sm" onclick='openQuote(${l.id})'>Quote</button>
-    <button class="btn btn-sm" onclick='openEdit(${JSON.stringify(l)})'>Edit</button>
+    <button class="btn btn-sm" onclick='openEdit(JSON.parse(this.dataset.l))' data-l="${lj}">Edit</button>
     <button class="btn btn-sm" onclick='doWon(${l.id},"${esc(l.name)}")'>Won</button>
     <button class="btn btn-sm btn-danger" onclick='openLost(${l.id})'>Lost</button>
     <button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>
-  `:`<button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>`;
-  return `<div class="lead">
+  `:`<button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>`):'';
+  const lostNote=l.lost_reason?`<div class="lead-notes">Lost: ${esc(l.lost_reason)}${l.lost_reason_notes?' — '+esc(l.lost_reason_notes):''}</div>`:'';
+  return `<div class="lead" data-id="${l.id}" data-status="${l.status}">
     <div class="lead-body">
-      <div class="lead-top">
-        <span class="lead-name">${esc(l.name)}</span>${badge(l.status)}
-      </div>
+      <div class="lead-top"><span class="lead-name">${esc(l.name)}</span>${badge(l.status)}</div>
       <div class="lead-service">${esc(l.service||'')}${contact?' · '+esc(contact):''}</div>
       ${l.notes?`<div class="lead-notes">${esc(l.notes)}</div>`:''}
+      ${lostNote}
     </div>
     <div class="lead-actions">
       <div>${quote}${due}<div class="lead-meta">#${l.id}</div></div>
@@ -274,14 +342,14 @@ function renderLead(l){
   </div>`;
 }
 
-function renderList(id,leads){
-  document.getElementById(id).innerHTML=leads.length?leads.map(renderLead).join(''):'<div class="empty">None</div>';
+function renderList(id,leads,showActions=true){
+  document.getElementById(id).innerHTML=leads.length?leads.map(l=>renderLead(l,showActions)).join(''):'<div class="empty">None</div>';
 }
 
 async function load(){
   try{
     const d=await fetch('/api/summary').then(r=>r.json());
-    const p=d.pipeline; const b=p.by_status||{};
+    const p=d.pipeline,b=p.by_status||{};
     const cards=[
       {label:'Open Pipeline',value:fmt(p.open_value),cls:'accent'},
       {label:'Won',value:fmt(p.won_value),cls:'green'},
@@ -299,6 +367,13 @@ async function load(){
   }catch(e){document.getElementById('updated').textContent='Error loading';}
 }
 
+async function loadClosed(){
+  try{
+    const d=await fetch('/api/closed').then(r=>r.json());
+    renderList('closed',d.closed,true);
+  }catch(e){document.getElementById('closed').innerHTML='<div class="empty">Error loading closed leads.</div>';}
+}
+
 // ---- Modal helpers ----
 function closeModal(e){if(e.target===e.currentTarget)e.target.classList.remove('open');}
 function closeOverlay(id){document.getElementById(id).classList.remove('open');}
@@ -307,6 +382,7 @@ function closeOverlay(id){document.getElementById(id).classList.remove('open');}
 function openAdd(){
   document.getElementById('modal-title').textContent='Add Lead';
   document.getElementById('edit-id').value='';
+  document.getElementById('dup-warn').style.display='none';
   ['edit-name','edit-service','edit-phone','edit-email','edit-notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('edit-followup').value='3';
   document.getElementById('fg-followup').style.display='';
@@ -319,6 +395,7 @@ function openAdd(){
 function openEdit(l){
   document.getElementById('modal-title').textContent='Edit Lead';
   document.getElementById('edit-id').value=l.id;
+  document.getElementById('dup-warn').style.display='none';
   document.getElementById('edit-name').value=l.name||'';
   document.getElementById('edit-service').value=l.service||'';
   document.getElementById('edit-phone').value=l.phone||'';
@@ -335,22 +412,38 @@ async function submitEdit(){
   const id=document.getElementById('edit-id').value;
   const name=document.getElementById('edit-name').value.trim();
   const service=document.getElementById('edit-service').value.trim();
+  const email=document.getElementById('edit-email').value.trim();
+  const followupDate=document.getElementById('edit-followup-date').value;
   const errEl=document.getElementById('edit-err');
+
   if(!name||!service){errEl.textContent='Name and service are required.';errEl.style.display='';return;}
+  if(name.length>MAX_NAME){errEl.textContent=`Name max ${MAX_NAME} chars.`;errEl.style.display='';return;}
+  if(email&&!validEmail(email)){errEl.textContent='Invalid email format.';errEl.style.display='';return;}
+  if(id&&followupDate&&!validDate(followupDate)){errEl.textContent='Follow-up date must be YYYY-MM-DD.';errEl.style.display='';return;}
+
   const body={name,service,
     phone:document.getElementById('edit-phone').value.trim()||null,
-    email:document.getElementById('edit-email').value.trim()||null,
+    email:email||null,
     notes:document.getElementById('edit-notes').value.trim()||null,
   };
   if(!id){body.followup_days=parseInt(document.getElementById('edit-followup').value)||3;}
-  else{body.follow_up_after=document.getElementById('edit-followup-date').value||null;}
+  else{body.follow_up_after=followupDate||null;}
+
   const url=id?`/api/leads/${id}/edit`:'/api/leads';
   const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const j=await r.json();
   if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
-  closeOverlay('modal-edit');
-  toast(id?'Lead updated.':'Lead added.');
-  load();
+
+  // Show duplicate warning if server flagged matches
+  if(!id&&j.duplicates&&j.duplicates.length){
+    const w=document.getElementById('dup-warn');
+    w.textContent=`⚠ ${j.duplicates.length} existing lead(s) with the same name: `+j.duplicates.map(d=>d.name).join(', ');
+    w.style.display='';
+  } else {
+    closeOverlay('modal-edit');
+    toast(id?'Lead updated.':'Lead added.');
+    load();
+  }
 }
 
 // ---- Quote ----
@@ -368,7 +461,7 @@ async function submitQuote(){
   const r=await fetch(`/api/leads/${id}/quote`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount})});
   const j=await r.json();
   if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
-  closeOverlay('modal-quote'); toast('Quote set.'); load();
+  closeOverlay('modal-quote');toast('Quote set.');load();
 }
 
 // ---- Won ----
@@ -396,7 +489,7 @@ async function submitLost(){
   const r=await fetch(`/api/leads/${id}/lost`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason,notes:notes||null})});
   const j=await r.json();
   if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
-  closeOverlay('modal-lost'); toast('Marked lost.'); load();
+  closeOverlay('modal-lost');toast('Marked lost.');load();
 }
 
 // ---- Delete ----
@@ -416,18 +509,28 @@ load();
 # ---------------------------------------------------------------------------
 
 _ID_PATTERN = re.compile(r"^/api/leads/(\d+)/(\w+)$")
+_ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        pass  # suppress request logs
+        pass
+
+    def _check_host(self) -> bool:
+        """Reject requests with a Host header pointing at a non-local host (DNS rebinding guard)."""
+        host_header = self.headers.get("Host", "")
+        hostname = host_header.split(":")[0]
+        if hostname and hostname not in _ALLOWED_HOSTS:
+            self.send_json({"error": "Forbidden"}, 403)
+            return False
+        return True
 
     def send_json(self, data: dict, status: int = 200):
         body = json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # No wildcard CORS — omit the header for localhost-only operation
         self.end_headers()
         self.wfile.write(body)
 
@@ -446,12 +549,19 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length))
 
     def do_GET(self):
+        if not self._check_host():
+            return
         path = urlparse(self.path).path
         if path in ("/", "/dashboard"):
             self.send_html(DASHBOARD_HTML)
         elif path == "/api/summary":
             try:
                 self.send_json(api_summary())
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+        elif path == "/api/closed":
+            try:
+                self.send_json(api_closed())
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
         elif re.match(r"^/api/leads/(\d+)$", path):
@@ -466,6 +576,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        if not self._check_host():
+            return
         path = urlparse(self.path).path
         try:
             body = self.read_json_body()
@@ -485,17 +597,25 @@ class Handler(BaseHTTPRequestHandler):
                 return
             phone = (body.get("phone") or "").strip() or None
             email = (body.get("email") or "").strip() or None
+            if email and not _valid_email(email):
+                self.send_json({"error": "invalid email format"}, 400)
+                return
             notes = (body.get("notes") or "").strip() or None
             if notes and len(notes) > MAX_FIELD_LENGTH:
                 self.send_json({"error": f"notes max {MAX_FIELD_LENGTH} chars"}, 400)
                 return
             try:
                 followup_days = int(body.get("followup_days") or DEFAULT_FOLLOWUP_DAYS)
+                if followup_days < 0:
+                    followup_days = DEFAULT_FOLLOWUP_DAYS
             except (ValueError, TypeError):
                 followup_days = DEFAULT_FOLLOWUP_DAYS
-            lead_id, _ = add_lead(name, service, phone=phone, email=email,
-                                   notes=notes, followup_days=followup_days)
-            self.send_json({"id": lead_id}, 201)
+            lead_id, dupes = add_lead(name, service, phone=phone, email=email,
+                                      notes=notes, followup_days=followup_days)
+            resp = {"id": lead_id}
+            if dupes:
+                resp["duplicates"] = [{"id": d["id"], "name": d["name"]} for d in dupes]
+            self.send_json(resp, 201)
             return
 
         # POST /api/leads/<id>/<action>
@@ -516,11 +636,21 @@ class Handler(BaseHTTPRequestHandler):
                 val = body.get(field)
                 if val is not None:
                     val = str(val).strip() or None
-                    if val and len(val) > MAX_FIELD_LENGTH:
+                    if val is None:
+                        continue
+                    if field == "name" and len(val) > MAX_NAME_LENGTH:
+                        self.send_json({"error": f"name max {MAX_NAME_LENGTH} chars"}, 400)
+                        return
+                    if field not in ("name",) and len(val) > MAX_FIELD_LENGTH:
                         self.send_json({"error": f"{field} max {MAX_FIELD_LENGTH} chars"}, 400)
                         return
-                    if val is not None:
-                        fields[field] = val
+                    if field == "email" and not _valid_email(val):
+                        self.send_json({"error": "invalid email format"}, 400)
+                        return
+                    if field == "follow_up_after" and not _valid_date(val):
+                        self.send_json({"error": "follow_up_after must be YYYY-MM-DD"}, 400)
+                        return
+                    fields[field] = val
             update_lead(lead_id, **fields)
             self.send_json({"ok": True})
 
@@ -561,8 +691,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": f"Unknown action: {action}"}, 404)
 
     def do_OPTIONS(self):
+        # Only allow same-origin preflight
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
@@ -577,15 +707,21 @@ def main():
     init_db()
     parser = argparse.ArgumentParser(
         prog="leadclaw-web",
-        description="LeadClaw web dashboard (read + write)",
+        description="LeadClaw web dashboard",
     )
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="Bind host (default: 127.0.0.1 — localhost only)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT,
                         help=f"Port (default: {DEFAULT_PORT})")
     args = parser.parse_args()
 
+    if args.host == "0.0.0.0":
+        print("WARNING: binding to 0.0.0.0 exposes unauthenticated write endpoints.")
+        print("         Only do this on a trusted local network.")
+        print("         For internet exposure, use a reverse proxy with auth.")
+
     server = HTTPServer((args.host, args.port), Handler)
-    url = f"http://{args.host}:{args.port}"
+    url = f"http://{'localhost' if args.host == '127.0.0.1' else args.host}:{args.port}"
     print(f"LeadClaw dashboard → {url}")
     print("Ctrl+C to stop.")
     try:
