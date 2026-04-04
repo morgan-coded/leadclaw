@@ -42,19 +42,19 @@ def _call(prompt: str, max_tokens: int = 300) -> Optional[str]:
         )
         return msg.content[0].text.strip()
     except EnvironmentError as e:
-        print(f"❌ {e}")
+        print(f"Error: {e}")
         return None
     except anthropic.AuthenticationError:
-        print("❌ Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.")
+        print("Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.")
         return None
     except anthropic.RateLimitError:
-        print("❌ Anthropic rate limit hit. Wait a moment and try again.")
+        print("Anthropic rate limit hit. Wait a moment and try again.")
         return None
     except anthropic.APIConnectionError:
-        print("❌ Could not reach Anthropic API. Check your internet connection.")
+        print("Could not reach Anthropic API. Check your internet connection.")
         return None
     except anthropic.APIError as e:
-        print(f"❌ Anthropic API error: {e}")
+        print(f"Anthropic API error: {e}")
         return None
 
 

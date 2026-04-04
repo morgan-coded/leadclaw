@@ -11,7 +11,7 @@ LeadClaw is a lightweight lead tracking CLI for local service businesses. It tel
 ```bash
 git clone https://github.com/morgan-coded/leadclaw.git
 cd leadclaw
-pip install -r requirements.txt
+pip install .
 export ANTHROPIC_API_KEY=your_key_here
 python3 seed.py        # initialize DB + seed demo data
 python3 commands.py digest
