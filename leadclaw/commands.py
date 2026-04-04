@@ -15,7 +15,15 @@ from leadclaw.config import (
     MAX_NAME_LENGTH,
     STATUS_LABELS,
 )
-from leadclaw.drafting import check_api_key, draft_followup, summarize_lead, summarize_pipeline
+from leadclaw.drafting import (
+    check_api_key,
+    draft_followup,
+    draft_pilot_outreach,
+    summarize_lead,
+    summarize_pilot_reply,
+    summarize_pipeline,
+)
+import leadclaw.pilot as _pilot
 from leadclaw.queries import (
     add_lead,
     delete_lead,
@@ -543,7 +551,312 @@ def build_parser():
     p_import.add_argument("file", help="Path to CSV file")
     p_import.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
+    # ---------------------------------------------------------------------------
+    # Pilot subcommands
+    # ---------------------------------------------------------------------------
+    pilot_p = sub.add_parser("pilot", help="Pilot candidate tracker")
+    pilot_sub = pilot_p.add_subparsers(dest="pilot_cmd", required=True)
+
+    pilot_sub.add_parser("status", help="Pilot tracker summary")
+
+    p_plist = pilot_sub.add_parser("list", help="List pilot candidates")
+    p_plist.add_argument("--status", default=None, choices=_pilot.STATUSES, help="Filter by status")
+    p_plist.add_argument("--limit", type=int, default=50)
+
+    p_pshow = pilot_sub.add_parser("show", help="Show a candidate")
+    p_pshow.add_argument("name", nargs="?", default="")
+    p_pshow.add_argument("--id", type=int)
+
+    pilot_sub.add_parser("add", help="Add a candidate (interactive)")
+
+    p_pimp = pilot_sub.add_parser(
+        "import",
+        help="Import candidates from CSV",
+        epilog="Required: name. Optional: service_type, phone, email, business_name, location, notes",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_pimp.add_argument("file")
+    p_pimp.add_argument("--yes", "-y", action="store_true")
+
+    p_pdraft = pilot_sub.add_parser("draft", help="AI outreach draft for a candidate")
+    p_pdraft.add_argument("name", nargs="?", default="")
+    p_pdraft.add_argument("--id", type=int)
+
+    p_papprove = pilot_sub.add_parser("approve", help="Approve a draft for sending")
+    p_papprove.add_argument("name", nargs="?", default="")
+    p_papprove.add_argument("--id", type=int)
+
+    p_psent = pilot_sub.add_parser("mark-sent", help="Mark outreach as sent")
+    p_psent.add_argument("name", nargs="?", default="")
+    p_psent.add_argument("--id", type=int)
+
+    p_preply = pilot_sub.add_parser("log-reply", help="Log a reply and get AI summary")
+    p_preply.add_argument("name", nargs="?", default="")
+    p_preply.add_argument("--id", type=int)
+
+    p_pconv = pilot_sub.add_parser("convert", help="Mark candidate as converted to pilot user")
+    p_pconv.add_argument("name", nargs="?", default="")
+    p_pconv.add_argument("--id", type=int)
+
+    p_ppass = pilot_sub.add_parser("pass", help="Mark candidate as passed")
+    p_ppass.add_argument("name", nargs="?", default="")
+    p_ppass.add_argument("--id", type=int)
+
+    pilot_sub.add_parser("followups", help="Candidates overdue for follow-up")
+
+    p_pexport = pilot_sub.add_parser("export", help="Export candidates to CSV")
+    p_pexport.add_argument("--output", "-o", default=None)
+
     return parser
+
+
+# ---------------------------------------------------------------------------
+# Pilot command handlers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_candidate(name: str, cid: Optional[int] = None):
+    if cid:
+        c = _pilot.get_candidate_by_id(cid)
+        if not c:
+            print(f"No candidate with id {cid}.")
+        return c
+    if not name:
+        print("Provide a name or --id.")
+        return None
+    c, all_matches = _pilot.get_candidate_by_name(name)
+    if not c:
+        print(f"No candidate matching '{name}'.")
+        return None
+    if len(all_matches) > 1:
+        print(f"Multiple matches for '{name}':")
+        for m in all_matches:
+            print(f"   [{m['id']}] {m['name']} — {m['service_type'] or 'N/A'} ({m['status']})")
+        print(f"   Using: [{c['id']}] {c['name']}. Use --id to be explicit.\n")
+    return c
+
+
+def _fmt_candidate(c) -> str:
+    lines = [f"[{c['status']}] [{c['id']}] {c['name']}"]
+    if c['business_name'] and c['business_name'] != c['name']:
+        lines.append(f"   Business: {c['business_name']}")
+    lines.append(f"   Service:  {c['service_type'] or 'N/A'}")
+    if c['location']:
+        lines.append(f"   Location: {c['location']}")
+    if c['phone']:
+        lines.append(f"   Phone:    {c['phone']}")
+    if c['email']:
+        lines.append(f"   Email:    {c['email']}")
+    lines.append(f"   Score:    {c['score']}/100  Source: {c['source']}")
+    if c['follow_up_after']:
+        lines.append(f"   Follow up: {str(c['follow_up_after'])[:10]}")
+    if c['outreach_draft']:
+        lines.append(f"   Draft:    {c['outreach_draft'][:80]}{'...' if len(c['outreach_draft']) > 80 else ''}")
+    if c['reply_summary']:
+        lines.append(f"   Reply summary: {c['reply_summary']}")
+    if c['notes']:
+        lines.append(f"   Notes:    {c['notes']}")
+    return "\n".join(lines)
+
+
+def cmd_pilot(args):
+    subcmd = args.pilot_cmd
+
+    if subcmd == "status":
+        summary = _pilot.get_pilot_summary()
+        print(f"=== Pilot Tracker ({summary['total']} total) ===")
+        for s in _pilot.STATUSES:
+            count = summary['by_status'].get(s, 0)
+            if count:
+                print(f"  {s}: {count}")
+        followups = _pilot.get_followup_due()
+        if followups:
+            print(f"\n  {len(followups)} overdue follow-up(s) — run: leadclaw pilot followups")
+
+    elif subcmd == "list":
+        candidates = _pilot.get_all_candidates(status=args.status, limit=args.limit)
+        label = f"Pilot Candidates — {args.status or 'all'}" 
+        print(f"=== {label} ({len(candidates)}) ===\n")
+        if not candidates:
+            print("None found.")
+            return
+        for c in candidates:
+            print(_fmt_candidate(c))
+            print()
+
+    elif subcmd == "show":
+        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        if c:
+            print(_fmt_candidate(c))
+            if c['outreach_draft']:
+                print(f"\n--- Draft ---\n{c['outreach_draft']}")
+            if c['reply_text']:
+                print(f"\n--- Reply ---\n{c['reply_text']}")
+            if c['reply_summary']:
+                print(f"\n--- Reply Summary ---\n{c['reply_summary']}")
+
+    elif subcmd == "add":
+        print("=== Add Pilot Candidate ===")
+        name = _prompt_str("Name", required=True, max_len=MAX_NAME_LENGTH)
+        business = _prompt_str("Business name (optional)")
+        service = _prompt_str("Service type (e.g. lawn care, roofing)")
+        phone = _prompt_str("Phone (optional)")
+        email = _prompt_str("Email (optional)")
+        location = _prompt_str("Location/city (optional)")
+        notes = _prompt_str("Notes (optional)")
+        cid, dupes = _pilot.add_candidate(
+            name=name, business_name=business, service_type=service,
+            phone=phone, email=email, location=location, notes=notes,
+            source="manual_entry",
+        )
+        if dupes:
+            print(f"\nWarning: {len(dupes)} existing candidate(s) with similar name:")
+            for d in dupes:
+                print(f"   [{d['id']}] {d['name']} — {d['service_type'] or 'N/A'} ({d['status']})")
+        c = _pilot.get_candidate_by_id(cid)
+        print(f"\nAdded [{cid}] {name} — score {c['score']}/100")
+
+    elif subcmd == "import":
+        import csv
+        path = args.file
+        if not os.path.exists(path):
+            print(f"File not found: {path}")
+            return
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None:
+                print("CSV appears empty or has no header row.")
+                return
+            reader.fieldnames = [h.strip().lower() for h in reader.fieldnames]
+            if "name" not in reader.fieldnames:
+                print("CSV must have a 'name' column.")
+                print("Optional: service_type, phone, email, business_name, location, notes")
+                return
+            rows = list(reader)
+        if not rows:
+            print("No data rows found.")
+            return
+        if not args.yes:
+            confirm = input(f"Import {len(rows)} candidate(s) from {path}? (yes/no): ").strip().lower()
+            if confirm != "yes":
+                print("Cancelled.")
+                return
+        result = _pilot.import_candidates_from_rows(rows)
+        print(f"Imported {result['imported']} candidate(s), skipped {result['skipped']}.")
+        for err in result["errors"]:
+            print(f"  ! {err}")
+
+    elif subcmd == "draft":
+        if not check_api_key():
+            print("ANTHROPIC_API_KEY not set — add it to .env")
+            return
+        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        if not c:
+            return
+        print(f"Drafting outreach for {c['name']}...\n")
+        draft = draft_pilot_outreach(dict(c))
+        if draft:
+            print("--- Draft (review before approving) ---")
+            print(draft)
+            print()
+            save = input("Save this draft? (yes/no): ").strip().lower()
+            if save == "yes":
+                _pilot.set_draft(c['id'], draft)
+                print(f"Draft saved. Status → drafted. Run: leadclaw pilot approve {c['name']}")
+
+    elif subcmd == "approve":
+        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        if not c:
+            return
+        if not c['outreach_draft']:
+            print(f"No draft for [{c['id']}] {c['name']}. Run: leadclaw pilot draft {c['name']}")
+            return
+        print(f"--- Draft for {c['name']} ---")
+        print(c['outreach_draft'])
+        print()
+        confirm = input("Approve for sending? (yes/no): ").strip().lower()
+        if confirm == "yes":
+            _pilot.set_status(c['id'], "approved")
+            print(f"[{c['id']}] {c['name']} → approved. Mark sent when you've sent it: leadclaw pilot mark-sent {c['name']}")
+        else:
+            print("Not approved. Run pilot draft again to regenerate.")
+
+    elif subcmd == "mark-sent":
+        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        if not c:
+            return
+        if c['status'] not in ('approved', 'drafted'):
+            print(f"Warning: status is '{c['status']}' — expected 'approved'. Marking sent anyway.")
+        _pilot.set_status(c['id'], "sent", contacted=True)
+        print(f"[{c['id']}] {c['name']} → sent. Follow-up scheduled.")
+
+    elif subcmd == "log-reply":
+        if not check_api_key():
+            print("ANTHROPIC_API_KEY not set — add it to .env")
+            return
+        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        if not c:
+            return
+        print(f"Paste their reply for {c['name']} (press Enter twice when done):")
+        lines = []
+        while True:
+            line = input()
+            if not line and lines and not lines[-1]:
+                break
+            lines.append(line)
+        reply = "\n".join(lines).strip()
+        if not reply:
+            print("No reply entered.")
+            return
+        _pilot.log_reply(c['id'], reply)
+        print("Reply logged. Summarizing...")
+        summary = summarize_pilot_reply(dict(c), reply)
+        if summary:
+            print(f"\n--- Summary ---\n{summary}")
+            _pilot.set_reply_summary(c['id'], summary)
+        print(f"\nStatus → replied. Next: leadclaw pilot convert {c['name']} or leadclaw pilot pass {c['name']}")
+
+    elif subcmd == "convert":
+        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        if not c:
+            return
+        _pilot.set_status(c['id'], "converted")
+        print(f"[{c['id']}] {c['name']} → converted pilot user! 🎉")
+
+    elif subcmd == "pass":
+        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        if not c:
+            return
+        _pilot.set_status(c['id'], "passed")
+        print(f"[{c['id']}] {c['name']} → passed.")
+
+    elif subcmd == "followups":
+        candidates = _pilot.get_followup_due()
+        if not candidates:
+            print("No overdue pilot follow-ups.")
+            return
+        print(f"=== Pilot Follow-ups Due ({len(candidates)}) ===\n")
+        for c in candidates:
+            print(_fmt_candidate(c))
+            print()
+
+    elif subcmd == "export":
+        import csv
+        candidates = _pilot.get_all_candidates(limit=100000)
+        if not candidates:
+            print("No candidates to export.")
+            return
+        out = args.output or "pilot_export.csv"
+        fields = ["id", "name", "business_name", "phone", "email", "service_type",
+                  "location", "source", "score", "status", "notes",
+                  "outreach_draft", "reply_text", "reply_summary",
+                  "contacted_at", "follow_up_after", "created_at"]
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+            writer.writeheader()
+            for c in candidates:
+                writer.writerow(dict(c))
+        print(f"Exported {len(candidates)} candidates to {out}")
 
 
 COMMAND_MAP = {
@@ -563,6 +876,7 @@ COMMAND_MAP = {
     "pipeline": cmd_pipeline,
     "export": cmd_export,
     "import": cmd_import,
+    "pilot": cmd_pilot,
 }
 
 

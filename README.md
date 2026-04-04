@@ -42,6 +42,19 @@ leadclaw digest        # first look at your pipeline
 | `pipeline` | Full AI pipeline analysis |
 | `export [--output file]` | Export all leads to CSV |
 | `import <file> [--yes]` | Import leads from a CSV file |
+| `pilot status` | Pilot tracker summary |
+| `pilot list [--status]` | List pilot candidates |
+| `pilot add` | Add a candidate (interactive) |
+| `pilot import <file>` | Import candidates from CSV |
+| `pilot show <name>` | Show full candidate detail |
+| `pilot draft <name>` | AI outreach draft |
+| `pilot approve <name>` | Approve draft for sending |
+| `pilot mark-sent <name>` | Mark outreach as sent |
+| `pilot log-reply <name>` | Log reply + AI summary |
+| `pilot convert <name>` | Mark converted to pilot user |
+| `pilot pass <name>` | Mark as passed |
+| `pilot followups` | Candidates overdue for follow-up |
+| `pilot export` | Export candidates to CSV |
 
 ### Global flags
 
@@ -62,6 +75,7 @@ leadclaw digest        # first look at your pipeline
 | `leadclaw/seed.py` | Demo data seeder (`leadclaw-seed` command) |
 | `leadclaw/scheduler.py` | Daily digest runner (`leadclaw-scheduler` command) |
 | `leadclaw/web.py` | Web dashboard server (`leadclaw-web` command) |
+| `leadclaw/pilot.py` | Pilot candidate tracker (queries, scoring, dedup) |
 | `leadclaw/config.py` | Shared constants (status labels, lost reasons, limits) |
 | `pyproject.toml` | Package definition + entry points |
 | `tests/` | pytest suite |
@@ -93,4 +107,5 @@ See [PILOT.md](PILOT.md) for the pilot user onboarding guide.
 - [x] OpenClaw integration — `digest`, `lead`, `draft-followup`, and more as chat commands
 - [x] CSV import — `leadclaw import <file>` with column validation and partial-row handling
 - [x] Web dashboard — `leadclaw-web` full CRUD UI (add, edit, quote, won, lost, delete in browser)
-- [ ] Week 5+ — SMS integration
+- [x] Pilot candidate tracker — scoring, dedup, outreach drafts, reply logging, follow-up reminders
+- [ ] Week 5+ — SMS integration, pilot tracker web UI

@@ -54,6 +54,34 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_leads_follow_up_after ON leads(follow_up_after);
             CREATE INDEX IF NOT EXISTS idx_leads_created_at      ON leads(created_at);
             CREATE INDEX IF NOT EXISTS idx_leads_name            ON leads(name COLLATE NOCASE);
+
+            CREATE TABLE IF NOT EXISTS pilot_candidates (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                name             TEXT NOT NULL,
+                business_name    TEXT,
+                phone            TEXT,
+                email            TEXT,
+                service_type     TEXT,
+                location         TEXT,
+                source           TEXT NOT NULL DEFAULT 'manual_entry',
+                score            INTEGER DEFAULT 0,
+                status           TEXT NOT NULL DEFAULT 'new'
+                                     CHECK(status IN ('new','drafted','approved','sent','replied','converted','passed')),
+                notes            TEXT,
+                outreach_draft   TEXT,
+                reply_text       TEXT,
+                reply_summary    TEXT,
+                contacted_at     TEXT,
+                follow_up_after  TEXT,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                last_updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pilot_status  ON pilot_candidates(status);
+            CREATE INDEX IF NOT EXISTS idx_pilot_score   ON pilot_candidates(score DESC);
+            CREATE INDEX IF NOT EXISTS idx_pilot_name    ON pilot_candidates(name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_pilot_phone   ON pilot_candidates(phone);
+            CREATE INDEX IF NOT EXISTS idx_pilot_followup ON pilot_candidates(follow_up_after);
         """)
     print(f"Database initialized at {DB_PATH}")
 

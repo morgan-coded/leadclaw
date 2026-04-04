@@ -127,6 +127,54 @@ def summarize_lead(lead: dict) -> Optional[str]:
     return _call(prompt, max_tokens=200)
 
 
+def draft_pilot_outreach(candidate: dict) -> Optional[str]:
+    """
+    Draft a personalized outreach text message for a pilot candidate.
+    Keeps it human, specific, and low-pressure.
+    """
+    name = candidate.get("name") or "there"
+    business = candidate.get("business_name") or name
+    service = candidate.get("service_type") or "your business"
+    location = candidate.get("location") or ""
+    notes = candidate.get("notes") or ""
+
+    context = [
+        f"Name: {name}",
+        f"Business: {business}",
+        f"Service type: {service}",
+    ]
+    if location:
+        context.append(f"Location: {location}")
+    if notes:
+        context.append(f"Notes: {notes}")
+
+    prompt = (
+        "You are writing a short, personal outreach text message on behalf of a software founder."
+        " They are looking for local service business owners to try a free lead-tracking tool called LeadClaw."
+        " They want honest pilot feedback, not a sale.\n\n"
+        f"Candidate context:\n{chr(10).join(context)}\n\n"
+        "Write 2-4 sentences. Be direct, genuine, and specific to their business type."
+        " No emojis. No fluff. Sound like a real person reaching out, not a template."
+        " Do not mention pricing. End with a simple yes/no question."
+    )
+    return _call(prompt, max_tokens=256)
+
+
+def summarize_pilot_reply(candidate: dict, reply_text: str) -> Optional[str]:
+    """
+    Summarize a pilot candidate's reply and suggest a next action.
+    """
+    name = candidate.get("name") or "the candidate"
+    prompt = (
+        f"A pilot outreach message was sent to {name}, a local {candidate.get('service_type') or 'service'} business owner."
+        " Here is their reply:\n\n"
+        f"{reply_text}\n\n"
+        "In 2-3 sentences: what is their sentiment (interested / neutral / not interested)?"
+        " What is the recommended next action?"
+    )
+    return _call(prompt, max_tokens=200)
+
+
 def summarize_pipeline(leads: list, summary_rows: list) -> Optional[str]:
     status_counts = {row["status"]: row["count"] for row in summary_rows}
     open_statuses = {"new", "quoted", "followup_due"}
