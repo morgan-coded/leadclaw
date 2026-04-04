@@ -205,11 +205,14 @@ def cmd_digest():
             print(f"  ... and {len(stale) - 5} more")
 
 
-if __name__ == "__main__":
-    args = sys.argv[1:]
+def main():
+    _run(sys.argv[1:])
+
+
+def _run(args):
     if not args:
         print("Commands: today | stale | lead <name> | draft-followup <name> | summarize <name> | digest | pipeline | quote <name> <amount> | won <name> | lost <name> <reason>")
-        sys.exit(1)
+        return
 
     cmd = args[0]
 
@@ -245,3 +248,7 @@ if __name__ == "__main__":
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,25 +1,40 @@
 # LeadClaw
 
-A lightweight lead tracking CLI for local service businesses.
+**Stop losing jobs to forgotten follow-ups.**
 
-## MVP Commands
+LeadClaw is a lightweight lead tracking CLI for local service businesses. It tells you who to call today, drafts your follow-up texts, and keeps your pipeline visible — without a CRM subscription.
 
-```bash
-python commands.py today               # leads due today
-python commands.py stale               # overdue follow-ups
-python commands.py lead "Mike Tran"    # look up a lead
-python commands.py draft-followup "Priya"  # draft a follow-up text
-```
+---
 
-## Setup
+## Quickstart
 
 ```bash
-pip install anthropic
+git clone https://github.com/morgan-coded/leadclaw.git
+cd leadclaw
+pip install -r requirements.txt
 export ANTHROPIC_API_KEY=your_key_here
-
-# Initialize DB and seed demo data
-python seed.py
+python3 seed.py        # initialize DB + seed demo data
+python3 commands.py digest
 ```
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `today` | Leads due today |
+| `stale` | Overdue follow-ups |
+| `lead <name>` | Look up a lead |
+| `draft-followup <name>` | AI-drafted follow-up text |
+| `summarize <name>` | AI narrative on a lead's situation |
+| `quote <name> <amount>` | Set/update a quote |
+| `won <name>` | Mark a lead won |
+| `lost <name> <reason>` | Mark a lead lost with structured reason |
+| `digest` | Pipeline snapshot + auto-promote stale leads |
+| `pipeline` | Full AI pipeline analysis |
+
+---
 
 ## Module Layout
 
@@ -28,18 +43,32 @@ python seed.py
 | `db.py` | DB connection, schema init |
 | `seed.py` | Demo data seeder |
 | `queries.py` | SQL query functions |
-| `drafting.py` | Claude-powered follow-up drafts |
+| `drafting.py` | Claude-powered follow-up drafts + summaries |
 | `commands.py` | CLI entry point |
-| `scheduler.py` | (Week 2+) Digest & cron jobs |
+| `scheduler.py` | Daily digest job (cron-ready) |
+| `landing/` | Landing page HTML |
+
+---
 
 ## Schema
 
-Leads have structured `lost_reason` values:
+Leads live in SQLite. Statuses: `new` → `quoted` → `followup_due` → `won` / `lost`
+
+`lost_reason` is structured (not free text):
 `price` · `timing` · `went_competitor` · `no_response` · `not_qualified` · `service_area` · `other`
+
+---
+
+## Pilot
+
+See [PILOT.md](PILOT.md) for the pilot user onboarding guide.
+
+---
 
 ## Roadmap
 
-- **Week 1** — schema, seed, core queries, CLI wired
-- **Week 2** — stale logic, follow-up drafts, owner digest
-- **Week 3** — summaries, quote tracking, better prompts
-- **Week 4** — packaging, landing page, pilot user
+- [x] Week 1 — schema, seed, core queries, 4 CLI commands
+- [x] Week 2 — stale auto-promotion, pipeline digest, owner summary
+- [x] Week 3 — quote tracking, won/lost, AI lead summaries, pipeline analysis
+- [x] Week 4 — packaging, landing page, pilot user guide
+- [ ] Week 5+ — CSV import, web UI, SMS integration
