@@ -53,6 +53,7 @@ from leadclaw.queries import (
     update_lead,
     update_quote,
 )
+import leadclaw.pilot as _pilot
 
 DEFAULT_PORT = 7432
 
@@ -120,6 +121,39 @@ def api_closed() -> dict:
     closed = [_lead_to_dict(r) for r in all_leads
               if r["status"] in ("won", "lost")]
     return {"closed": closed}
+
+
+def _candidate_to_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "business_name": row["business_name"],
+        "phone": row["phone"],
+        "email": row["email"],
+        "service_type": row["service_type"],
+        "location": row["location"],
+        "source": row["source"],
+        "score": row["score"],
+        "status": row["status"],
+        "notes": row["notes"],
+        "outreach_draft": row["outreach_draft"],
+        "reply_text": row["reply_text"],
+        "reply_summary": row["reply_summary"],
+        "contacted_at": str(row["contacted_at"])[:10] if row["contacted_at"] else None,
+        "follow_up_after": str(row["follow_up_after"])[:10] if row["follow_up_after"] else None,
+        "created_at": str(row["created_at"])[:10] if row["created_at"] else None,
+    }
+
+
+def api_pilot_candidates(status: str = None) -> dict:
+    rows = _pilot.get_all_candidates(status=status or None, limit=500)
+    summary = _pilot.get_pilot_summary()
+    followups = _pilot.get_followup_due()
+    return {
+        "candidates": [_candidate_to_dict(r) for r in rows],
+        "summary": summary,
+        "followup_count": len(followups),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +246,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="tabs">
     <div class="tab active" onclick="switchTab('pipeline')">Pipeline</div>
     <div class="tab" onclick="switchTab('closed')">Closed</div>
+    <div class="tab" id="tab-btn-pilot" onclick="switchTab('pilot')">Pilot</div>
   </div>
 
   <div class="tab-panel active" id="tab-pipeline">
@@ -222,6 +257,79 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   <div class="tab-panel" id="tab-closed">
     <section><h2>Won &amp; Lost</h2><div class="lead-list" id="closed"></div></section>
+  </div>
+
+  <div class="tab-panel" id="tab-pilot">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <div id="pilot-summary-bar" style="color:var(--muted);font-size:12px"></div>
+      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+        <select id="pilot-filter" onchange="loadPilot()" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 10px;font-size:12px;font-family:inherit">
+          <option value="">All statuses</option>
+          <option value="new">new</option>
+          <option value="drafted">drafted</option>
+          <option value="approved">approved</option>
+          <option value="sent">sent</option>
+          <option value="replied">replied</option>
+          <option value="converted">converted</option>
+          <option value="passed">passed</option>
+        </select>
+      </div>
+    </div>
+    <div id="pilot-followup-banner" class="warn-banner" style="display:none;margin-bottom:14px"></div>
+    <div id="pilot-table-wrap">
+      <table id="pilot-table" style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px">
+            <th style="padding:8px 10px;text-align:left">Name / Business</th>
+            <th style="padding:8px 6px;text-align:left">Service</th>
+            <th style="padding:8px 6px;text-align:left">Location</th>
+            <th style="padding:8px 6px;text-align:center">Score</th>
+            <th style="padding:8px 6px;text-align:center">Status</th>
+            <th style="padding:8px 6px;text-align:left">Source</th>
+            <th style="padding:8px 6px;text-align:left">Follow-up</th>
+            <th style="padding:8px 6px;text-align:left">Reply</th>
+            <th style="padding:8px 6px;text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="pilot-tbody"></tbody>
+      </table>
+      <div id="pilot-empty" class="empty" style="display:none">No candidates. Import a CSV or add manually via CLI.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Pilot draft modal -->
+<div class="overlay" id="modal-pilot-draft" onclick="closeModal(event)">
+  <div class="modal" style="max-width:520px">
+    <h3 id="pdraft-title">Outreach Draft</h3>
+    <input type="hidden" id="pdraft-id">
+    <div class="form-group">
+      <label>Draft text (edit before approving)</label>
+      <textarea id="pdraft-text" rows="6" style="font-size:13px"></textarea>
+    </div>
+    <div class="err" id="pdraft-err"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeOverlay('modal-pilot-draft')">Cancel</button>
+      <button class="btn" onclick="savePilotDraft(false)">Save only</button>
+      <button class="btn btn-primary" onclick="savePilotDraft(true)">Save &amp; Approve</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pilot reply modal -->
+<div class="overlay" id="modal-pilot-reply" onclick="closeModal(event)">
+  <div class="modal" style="max-width:520px">
+    <h3>Log Reply</h3>
+    <input type="hidden" id="preply-id">
+    <div class="form-group">
+      <label>Paste their reply</label>
+      <textarea id="preply-text" rows="5" placeholder="Their exact response..."></textarea>
+    </div>
+    <div class="err" id="preply-err"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeOverlay('modal-pilot-reply')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitPilotReply()">Log &amp; Summarize</button>
+    </div>
   </div>
 </div>
 
@@ -308,9 +416,10 @@ function validDate(v){return /^\d{4}-\d{2}-\d{2}$/.test(v)&&!isNaN(Date.parse(v)
 
 // ---- Tabs ----
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['pipeline','closed'][i]===name));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['pipeline','closed','pilot'][i]===name));
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));
   if(name==='closed')loadClosed();
+  if(name==='pilot')loadPilot();
 }
 
 // ---- Render ----
@@ -499,6 +608,140 @@ async function doDelete(id,name){
   if(r.ok){toast('Deleted.');load();}else{toast('Error',true);}
 }
 
+// ===========================================================================
+// Pilot tracker
+// ===========================================================================
+
+const PILOT_STATUSES=['new','drafted','approved','sent','replied','converted','passed'];
+const PILOT_STATUS_COLORS={
+  new:'#60a5fa',drafted:'#a78bfa',approved:'#34d399',
+  sent:'#f59e0b',replied:'#fb923c',converted:'#22c55e',passed:'#6b7280'
+};
+
+function pilotBadge(s){
+  const c=PILOT_STATUS_COLORS[s]||'#9ca3af';
+  return `<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:600;text-transform:uppercase;background:${c}22;color:${c}">${s}</span>`;
+}
+
+function scoreBar(n){
+  const c=n>=80?'var(--green)':n>=60?'var(--yellow)':'var(--red)';
+  return `<div style="display:flex;align-items:center;gap:5px">
+    <div style="width:40px;height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+      <div style="width:${n}%;height:100%;background:${c}"></div>
+    </div>
+    <span style="font-size:11px;color:${c}">${n}</span>
+  </div>`;
+}
+
+async function loadPilot(){
+  const status=document.getElementById('pilot-filter').value;
+  const url='/api/pilot'+(status?'?status='+encodeURIComponent(status):'');
+  try{
+    const d=await fetch(url).then(r=>r.json());
+    // Summary bar
+    const bs=d.summary.by_status||{};
+    const parts=PILOT_STATUSES.filter(s=>bs[s]).map(s=>`${s}: ${bs[s]}`);
+    document.getElementById('pilot-summary-bar').textContent=`${d.summary.total} total — `+parts.join(' · ');
+    // Follow-up banner
+    const fb=document.getElementById('pilot-followup-banner');
+    if(d.followup_count>0){
+      fb.textContent=`⚠ ${d.followup_count} candidate(s) overdue for follow-up`;
+      fb.style.display='';
+    }else{fb.style.display='none';}
+    // Table
+    const tbody=document.getElementById('pilot-tbody');
+    const empty=document.getElementById('pilot-empty');
+    if(!d.candidates.length){tbody.innerHTML='';empty.style.display='';return;}
+    empty.style.display='none';
+    tbody.innerHTML=d.candidates.map(c=>{
+      const biz=c.business_name&&c.business_name!==c.name?`<div style="font-size:11px;color:var(--muted)">${esc(c.business_name)}</div>`:''
+      const contact=[c.phone,c.email].filter(Boolean).join(' · ');
+      const contactEl=contact?`<div style="font-size:11px;color:var(--muted)">${esc(contact)}</div>`:""
+      const draftSnip=c.outreach_draft?`<div style="font-size:11px;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.outreach_draft)}">${esc(c.outreach_draft.slice(0,60))}…</div>`:""
+      const replyEl=c.reply_summary?`<div style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.reply_summary)}">${esc(c.reply_summary.slice(0,60))}…</div>`:(c.reply_text?'<span style="font-size:11px;color:var(--muted)">logged</span>':'')
+      const overdue=c.follow_up_after&&c.follow_up_after<new Date().toISOString().slice(0,10);
+      const dueEl=c.follow_up_after?`<span style="font-size:11px;color:${overdue?'var(--yellow)':'var(--muted)'}">${c.follow_up_after}</span>`:"";
+      const cj=esc(JSON.stringify(c));
+      // Action buttons
+      const canDraft=['new','drafted'].includes(c.status);
+      const canApprove=c.status==='drafted'&&c.outreach_draft;
+      const canSent=['approved','drafted'].includes(c.status);
+      const canReply=c.status==='sent';
+      const canConvert=['replied','sent'].includes(c.status);
+      const canPass=!['converted','passed'].includes(c.status);
+      const actions=[
+        canDraft?`<button class="btn btn-sm" onclick='openPilotDraft(JSON.parse(this.dataset.c))' data-c="${cj}">Draft</button>`:"",
+        canApprove?`<button class="btn btn-sm" onclick='pilotAction(${c.id},"approve")'>Approve</button>`:"",
+        canSent?`<button class="btn btn-sm" onclick='pilotAction(${c.id},"mark-sent")'>Sent</button>`:"",
+        canReply?`<button class="btn btn-sm" onclick='openPilotReply(${c.id})'>Log Reply</button>`:"",
+        canConvert?`<button class="btn btn-sm" onclick='pilotAction(${c.id},"convert")'>Convert</button>`:"",
+        canPass?`<button class="btn btn-sm btn-danger" onclick='pilotAction(${c.id},"pass")'>Pass</button>`:"",
+      ].filter(Boolean).join('');
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:10px 10px"><span style="font-weight:600">${esc(c.name)}</span>${biz}${contactEl}</td>
+        <td style="padding:10px 6px">${esc(c.service_type||'')}</td>
+        <td style="padding:10px 6px;font-size:12px;color:var(--muted)">${esc(c.location||'')}</td>
+        <td style="padding:10px 6px;text-align:center">${scoreBar(c.score)}</td>
+        <td style="padding:10px 6px;text-align:center">${pilotBadge(c.status)}${draftSnip}</td>
+        <td style="padding:10px 6px;font-size:11px;color:var(--muted)">${esc(c.source.replace('_',' '))}</td>
+        <td style="padding:10px 6px">${dueEl}</td>
+        <td style="padding:10px 6px">${replyEl}</td>
+        <td style="padding:10px 6px;text-align:right;white-space:nowrap">${actions}</td>
+      </tr>`;
+    }).join('');
+  }catch(e){document.getElementById('pilot-summary-bar').textContent='Error loading pilot data';}
+}
+
+function openPilotDraft(c){
+  document.getElementById('pdraft-id').value=c.id;
+  document.getElementById('pdraft-title').textContent='Draft — '+c.name;
+  document.getElementById('pdraft-text').value=c.outreach_draft||'';
+  document.getElementById('pdraft-err').style.display='none';
+  document.getElementById('modal-pilot-draft').classList.add('open');
+}
+
+async function savePilotDraft(andApprove){
+  const id=document.getElementById('pdraft-id').value;
+  const text=document.getElementById('pdraft-text').value.trim();
+  const errEl=document.getElementById('pdraft-err');
+  if(!text){errEl.textContent='Draft cannot be empty.';errEl.style.display='';return;}
+  const action=andApprove?'save-and-approve':'save-draft';
+  const r=await fetch(`/api/pilot/${id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:text})});
+  const j=await r.json();
+  if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
+  closeOverlay('modal-pilot-draft');
+  toast(andApprove?'Draft saved and approved.':'Draft saved.');
+  loadPilot();
+}
+
+function openPilotReply(id){
+  document.getElementById('preply-id').value=id;
+  document.getElementById('preply-text').value='';
+  document.getElementById('preply-err').style.display='none';
+  document.getElementById('modal-pilot-reply').classList.add('open');
+}
+
+async function submitPilotReply(){
+  const id=document.getElementById('preply-id').value;
+  const text=document.getElementById('preply-text').value.trim();
+  const errEl=document.getElementById('preply-err');
+  if(!text){errEl.textContent='Reply text is required.';errEl.style.display='';return;}
+  const r=await fetch(`/api/pilot/${id}/log-reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reply:text})});
+  const j=await r.json();
+  if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
+  closeOverlay('modal-pilot-reply');
+  toast(j.summary?'Reply logged and summarized.':'Reply logged.');
+  loadPilot();
+}
+
+async function pilotAction(id,action){
+  const labels={approve:'Approve this draft for sending?','mark-sent':'Mark as sent?',convert:'Mark as converted pilot user?',pass:'Mark as passed?'};
+  if(!confirm(labels[action]||action+'?'))return;
+  const r=await fetch(`/api/pilot/${id}/${action}`,{method:'POST'});
+  const j=await r.json();
+  if(r.ok){toast(action==='convert'?'Converted! 🎉':action+' done.');loadPilot();}else{toast(j.error||'Error',true);}
+}
+
 load();
 </script>
 </body>
@@ -509,6 +752,7 @@ load();
 # ---------------------------------------------------------------------------
 
 _ID_PATTERN = re.compile(r"^/api/leads/(\d+)/(\w+)$")
+_PILOT_ID_PATTERN = re.compile(r"^/api/pilot/(\d+)/([\w-]+)$")
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
@@ -564,6 +808,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(api_closed())
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
+        elif path == "/api/pilot" or path.startswith("/api/pilot?"):
+            from urllib.parse import parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            status = (qs.get("status") or [None])[0]
+            try:
+                self.send_json(api_pilot_candidates(status))
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
         elif re.match(r"^/api/leads/(\d+)$", path):
             lead_id = int(path.split("/")[-1])
             lead = get_lead_by_id(lead_id)
@@ -583,6 +835,11 @@ class Handler(BaseHTTPRequestHandler):
             body = self.read_json_body()
         except (json.JSONDecodeError, ValueError):
             self.send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        # Pilot routes
+        if _PILOT_ID_PATTERN.match(path):
+            self._handle_pilot_post(path, body)
             return
 
         # POST /api/leads — add new lead
@@ -689,6 +946,75 @@ class Handler(BaseHTTPRequestHandler):
 
         else:
             self.send_json({"error": f"Unknown action: {action}"}, 404)
+
+    def _handle_pilot_post(self, path, body):
+        """Pilot POST actions — called from do_POST after leads routing."""
+        pm = _PILOT_ID_PATTERN.match(path)
+        if not pm:
+            return False
+        cid, action = int(pm.group(1)), pm.group(2)
+        candidate = _pilot.get_candidate_by_id(cid)
+        if not candidate:
+            self.send_json({"error": f"Candidate {cid} not found"}, 404)
+            return True
+
+        if action == "save-draft":
+            draft = (body.get("draft") or "").strip()
+            if not draft:
+                self.send_json({"error": "draft is required"}, 400)
+                return True
+            _pilot.set_draft(cid, draft)
+            self.send_json({"ok": True})
+
+        elif action == "save-and-approve":
+            draft = (body.get("draft") or "").strip()
+            if not draft:
+                self.send_json({"error": "draft is required"}, 400)
+                return True
+            _pilot.set_draft(cid, draft)
+            _pilot.set_status(cid, "approved")
+            self.send_json({"ok": True})
+
+        elif action == "approve":
+            if not candidate["outreach_draft"]:
+                self.send_json({"error": "No draft to approve. Save a draft first."}, 400)
+                return True
+            _pilot.set_status(cid, "approved")
+            self.send_json({"ok": True})
+
+        elif action == "mark-sent":
+            _pilot.set_status(cid, "sent", contacted=True)
+            self.send_json({"ok": True})
+
+        elif action == "log-reply":
+            reply = (body.get("reply") or "").strip()
+            if not reply:
+                self.send_json({"error": "reply text is required"}, 400)
+                return True
+            _pilot.log_reply(cid, reply)
+            # Try AI summary (non-blocking — skip if no key)
+            summary = None
+            try:
+                from leadclaw.drafting import check_api_key, summarize_pilot_reply
+                if check_api_key():
+                    summary = summarize_pilot_reply(dict(candidate), reply)
+                    if summary:
+                        _pilot.set_reply_summary(cid, summary)
+            except Exception:
+                pass
+            self.send_json({"ok": True, "summary": summary})
+
+        elif action == "convert":
+            _pilot.set_status(cid, "converted")
+            self.send_json({"ok": True})
+
+        elif action == "pass":
+            _pilot.set_status(cid, "passed")
+            self.send_json({"ok": True})
+
+        else:
+            self.send_json({"error": f"Unknown pilot action: {action}"}, 404)
+        return True
 
     def do_OPTIONS(self):
         # Only allow same-origin preflight

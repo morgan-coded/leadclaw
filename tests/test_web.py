@@ -388,3 +388,170 @@ def test_html_max_name_injected():
 def test_html_api_closed_fetch():
     """JS must call /api/closed when loading the closed tab."""
     assert "/api/closed" in DASHBOARD_HTML
+
+
+def test_html_pilot_tab_present():
+    """Pilot tab must be present in dashboard HTML."""
+    assert "switchTab('pilot')" in DASHBOARD_HTML
+    assert 'id="tab-pilot"' in DASHBOARD_HTML
+
+
+def test_html_pilot_table_columns():
+    """Pilot table must have score, status, source, follow-up, reply columns."""
+    assert 'id="pilot-table"' in DASHBOARD_HTML
+    assert 'Score' in DASHBOARD_HTML
+    assert 'Source' in DASHBOARD_HTML
+    assert 'Follow-up' in DASHBOARD_HTML
+    assert 'Reply' in DASHBOARD_HTML
+
+
+def test_html_pilot_action_buttons():
+    """Pilot action buttons must be present in JS."""
+    assert 'openPilotDraft' in DASHBOARD_HTML
+    assert 'pilotAction' in DASHBOARD_HTML
+    assert 'openPilotReply' in DASHBOARD_HTML
+    assert 'save-and-approve' in DASHBOARD_HTML
+    assert 'mark-sent' in DASHBOARD_HTML
+    assert 'log-reply' in DASHBOARD_HTML
+
+
+def test_html_pilot_modals():
+    """Pilot draft and reply modals must be present."""
+    assert 'id="modal-pilot-draft"' in DASHBOARD_HTML
+    assert 'id="modal-pilot-reply"' in DASHBOARD_HTML
+
+
+def test_html_pilot_status_filter():
+    """Status filter select must be in the pilot tab."""
+    assert 'id="pilot-filter"' in DASHBOARD_HTML
+
+
+# ---------------------------------------------------------------------------
+# Pilot API HTTP tests
+# ---------------------------------------------------------------------------
+
+def test_http_get_pilot_empty(web_server):
+    status, body = _get("/api/pilot")
+    assert status == 200
+    data = json.loads(body)
+    assert "candidates" in data
+    assert "summary" in data
+    assert data["candidates"] == []
+
+
+def test_http_get_pilot_with_candidates(web_server):
+    queries.add_lead("ignore", "roofing")  # leads don't appear in pilot
+    from leadclaw import pilot as p
+    p.add_candidate("Pilot Web Test", service_type="lawn care", phone="555-8888")
+    status, body = _get("/api/pilot")
+    assert status == 200
+    data = json.loads(body)
+    names = [c["name"] for c in data["candidates"]]
+    assert "Pilot Web Test" in names
+
+
+def test_http_get_pilot_filter_by_status(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Filter Test", service_type="roofing")
+    p.set_status(cid, "sent", contacted=True)
+    p.add_candidate("New One", service_type="painting")
+    status, body = _get("/api/pilot?status=sent")
+    assert status == 200
+    data = json.loads(body)
+    assert all(c["status"] == "sent" for c in data["candidates"])
+
+
+def test_http_pilot_save_draft(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Draft Save", service_type="fencing")
+    status, body = _post(f"/api/pilot/{cid}/save-draft", {"draft": "Hey, quick question about your fencing work."})
+    assert status == 200
+    c = p.get_candidate_by_id(cid)
+    assert c["outreach_draft"] == "Hey, quick question about your fencing work."
+    assert c["status"] == "drafted"
+
+
+def test_http_pilot_save_draft_empty(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Empty Draft", service_type="roofing")
+    status, body = _post(f"/api/pilot/{cid}/save-draft", {"draft": ""})
+    assert status == 400
+
+
+def test_http_pilot_save_and_approve(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Approve Test", service_type="lawn care")
+    status, body = _post(f"/api/pilot/{cid}/save-and-approve", {"draft": "Hi, I saw your lawn care work on Nextdoor."})
+    assert status == 200
+    c = p.get_candidate_by_id(cid)
+    assert c["status"] == "approved"
+    assert c["outreach_draft"] is not None
+
+
+def test_http_pilot_approve_without_draft(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("No Draft", service_type="roofing")
+    status, body = _post(f"/api/pilot/{cid}/approve", {})
+    assert status == 400
+    assert "draft" in body.get("error", "").lower()
+
+
+def test_http_pilot_approve_with_draft(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Has Draft", service_type="painting")
+    p.set_draft(cid, "My draft message.")
+    status, body = _post(f"/api/pilot/{cid}/approve", {})
+    assert status == 200
+    assert p.get_candidate_by_id(cid)["status"] == "approved"
+
+
+def test_http_pilot_mark_sent(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Send Test", service_type="gutters")
+    p.set_draft(cid, "draft")
+    p.set_status(cid, "approved")
+    status, body = _post(f"/api/pilot/{cid}/mark-sent", {})
+    assert status == 200
+    c = p.get_candidate_by_id(cid)
+    assert c["status"] == "sent"
+    assert c["contacted_at"] is not None
+
+
+def test_http_pilot_log_reply(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Reply Test", service_type="roofing")
+    p.set_status(cid, "sent", contacted=True)
+    status, body = _post(f"/api/pilot/{cid}/log-reply", {"reply": "Sure, I'd be interested."})
+    assert status == 200
+    c = p.get_candidate_by_id(cid)
+    assert c["reply_text"] == "Sure, I'd be interested."
+    assert c["status"] == "replied"
+
+
+def test_http_pilot_log_reply_empty(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Empty Reply", service_type="fencing")
+    status, body = _post(f"/api/pilot/{cid}/log-reply", {"reply": ""})
+    assert status == 400
+
+
+def test_http_pilot_convert(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Convert Test", service_type="lawn care")
+    p.set_status(cid, "replied")
+    status, body = _post(f"/api/pilot/{cid}/convert", {})
+    assert status == 200
+    assert p.get_candidate_by_id(cid)["status"] == "converted"
+
+
+def test_http_pilot_pass(web_server):
+    from leadclaw import pilot as p
+    cid, _ = p.add_candidate("Pass Test", service_type="painting")
+    status, body = _post(f"/api/pilot/{cid}/pass", {})
+    assert status == 200
+    assert p.get_candidate_by_id(cid)["status"] == "passed"
+
+
+def test_http_pilot_not_found(web_server):
+    status, body = _post("/api/pilot/99999/approve", {})
+    assert status == 404
