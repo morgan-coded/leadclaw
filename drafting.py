@@ -118,10 +118,13 @@ def summarize_pipeline(leads: list, summary_rows: list) -> str:
     """
     Generate an AI narrative of the overall pipeline state.
     leads: list of active lead dicts
-    summary_rows: from get_pipeline_summary()
+    summary_rows: from get_pipeline_summary() rows (not the totals tuple)
     """
     status_counts = {row["status"]: row["count"] for row in summary_rows}
-    total_value = sum(row["total_quoted"] for row in summary_rows)
+    open_statuses = {"new", "quoted", "followup_due"}
+    total_value = sum(
+        row["total_quoted"] for row in summary_rows if row["status"] in open_statuses
+    )
 
     stale = [l for l in leads if l["status"] == "followup_due"]
     high_value = sorted(

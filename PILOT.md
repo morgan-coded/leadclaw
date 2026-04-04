@@ -33,48 +33,55 @@ This creates the database with 10 example leads so you can try everything immedi
 
 ### Morning — see what needs attention
 ```bash
-leadclaw digest
+python3 commands.py digest
 ```
 Shows your pipeline snapshot and promotes any overdue leads automatically.
 
 ### See today's leads
 ```bash
-leadclaw today
+python3 commands.py today
 ```
 
 ### See what's gone stale
 ```bash
-leadclaw stale
+python3 commands.py stale
 ```
 
 ---
 
 ## Working a lead
 
+### Add a real lead
+```bash
+python3 commands.py add
+```
+Walks you through name, service, phone, notes, and follow-up timing.
+
 ### Look up a lead
 ```bash
-leadclaw lead "Mike"
+python3 commands.py lead "Mike"
 ```
 
 ### Draft a follow-up text
 ```bash
-leadclaw draft-followup "Mike"
+python3 commands.py draft-followup "Mike"
 ```
 Copy and paste it into your texts. Edit as needed — it's a starting point.
 
 ### Update a quote
 ```bash
-leadclaw quote "Mike" 850
+python3 commands.py quote "Mike" 850
 ```
+Automatically sets last contact time and schedules a follow-up in 3 days.
 
 ### Mark won
 ```bash
-leadclaw won "Mike"
+python3 commands.py won "Mike"
 ```
 
 ### Mark lost
 ```bash
-leadclaw lost "Mike" price
+python3 commands.py lost "Mike" price
 # Reasons: price | timing | went_competitor | no_response | not_qualified | service_area | other
 ```
 
@@ -82,28 +89,11 @@ leadclaw lost "Mike" price
 
 ## Full pipeline view
 ```bash
-leadclaw pipeline
+python3 commands.py pipeline
 ```
 Gives you a full breakdown + AI analysis of where your pipeline stands.
 
 ---
-
-## Adding real leads
-
-Right now, leads are added directly to the database. In a future version, this will be a simple form or CSV import.
-
-To add a lead manually (temporary):
-
-```python
-# run python3, then:
-from db import get_conn
-conn = get_conn()
-conn.execute("""
-  INSERT INTO leads (name, phone, service, status, created_at, follow_up_after)
-  VALUES ('John Smith', '555-999-0001', 'lawn care', 'new', datetime('now'), datetime('now', '+3 days'))
-""")
-conn.commit()
-```
 
 ---
 

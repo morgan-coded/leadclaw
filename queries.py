@@ -6,15 +6,15 @@ from datetime import datetime
 
 
 def get_today_leads():
-    """Leads created today or with a follow_up_after of today."""
+    """Active leads created today or with a follow_up_after of today."""
     conn = get_conn()
     cur = conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
     cur.execute(
         """
         SELECT * FROM leads
-        WHERE date(created_at) = ?
-           OR date(follow_up_after) = ?
+        WHERE status NOT IN ('won', 'lost')
+          AND (date(created_at) = ? OR date(follow_up_after) = ?)
         ORDER BY follow_up_after ASC, created_at ASC
         """,
         (today, today),
@@ -94,7 +94,7 @@ def update_lead_status(lead_id, status, lost_reason=None, lost_reason_notes=None
 
 
 def get_pipeline_summary():
-    """Return counts and total quote value by status."""
+    """Return counts and quote value by status, with open/closed split."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -109,8 +109,19 @@ def get_pipeline_summary():
         """
     )
     rows = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT
+            COALESCE(SUM(CASE WHEN status NOT IN ('won','lost') THEN quote_amount ELSE 0 END), 0) as open_value,
+            COALESCE(SUM(CASE WHEN status = 'won' THEN quote_amount ELSE 0 END), 0) as won_value,
+            COALESCE(SUM(CASE WHEN status = 'lost' THEN quote_amount ELSE 0 END), 0) as lost_value
+        FROM leads
+        """
+    )
+    totals = cur.fetchone()
     conn.close()
-    return rows
+    return rows, totals
 
 
 def get_all_active_leads():
@@ -129,13 +140,39 @@ def get_all_active_leads():
     return rows
 
 
-def update_quote(lead_id, amount):
-    """Set or update quote amount for a lead."""
+def add_lead(name, service, phone=None, email=None, notes=None, followup_days=3):
+    """Insert a new lead and return its id."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "UPDATE leads SET quote_amount = ?, status = 'quoted' WHERE id = ?",
-        (amount, lead_id),
+        """
+        INSERT INTO leads
+            (name, phone, email, service, status, created_at, last_contact_at, follow_up_after, notes)
+        VALUES
+            (?, ?, ?, ?, 'new', datetime('now'), datetime('now'), datetime('now', ? || ' days'), ?)
+        """,
+        (name, phone, email, service, f"+{followup_days}", notes),
+    )
+    lead_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return lead_id
+
+
+def update_quote(lead_id, amount, followup_days=3):
+    """Set or update quote amount, log contact time, and schedule next follow-up."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE leads
+        SET quote_amount = ?,
+            status = 'quoted',
+            last_contact_at = datetime('now'),
+            follow_up_after = datetime('now', ? || ' days')
+        WHERE id = ?
+        """,
+        (amount, f"+{followup_days}", lead_id),
     )
     conn.commit()
     conn.close()
