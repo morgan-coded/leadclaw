@@ -1,19 +1,40 @@
 """
 commands.py - CLI entry point using argparse
 """
-import sys
 import argparse
+import sys
+from datetime import datetime
 from typing import Optional
 
-from config import (
+from leadclaw.config import (
     DEFAULT_FOLLOWUP_DAYS,
     LOST_REASONS,
     MAX_FIELD_LENGTH,
+    MAX_LIST_ROWS,
     MAX_NAME_LENGTH,
     STATUS_LABELS,
 )
-from drafting import check_api_key, draft_followup, summarize_lead, summarize_pipeline
-from queries import (
+
+# Runtime flag — set by build_parser() based on --plain
+_PLAIN = False
+
+STATUS_LABELS_PLAIN = {
+    "new": "[new]",
+    "quoted": "[quoted]",
+    "followup_due": "[followup_due]",
+    "won": "[won]",
+    "lost": "[lost]",
+}
+
+
+def _status_label(status: str) -> str:
+    if _PLAIN:
+        return STATUS_LABELS_PLAIN.get(status, status)
+    return STATUS_LABELS.get(status, status)
+
+
+from leadclaw.drafting import check_api_key, draft_followup, summarize_lead, summarize_pipeline
+from leadclaw.queries import (
     add_lead,
     delete_lead,
     get_all_active_leads,
@@ -38,8 +59,8 @@ from queries import (
 
 
 def fmt_lead(lead) -> str:
-    emoji = STATUS_LABELS.get(lead["status"], "?").split()[0]
-    lines = [f"{emoji} [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'}"]
+    prefix = _status_label(lead["status"]).split()[0] if not _PLAIN else _status_label(lead["status"])
+    lines = [f"{prefix} [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'}"]
     lines.append(f"   Status: {lead['status']}")
     if lead["quote_amount"]:
         lines.append(f"   Quote:  ${lead['quote_amount']:,.0f}")
@@ -60,7 +81,7 @@ def fmt_lead(lead) -> str:
 
 def print_pipeline_summary(summary, totals):
     for row in summary:
-        label = STATUS_LABELS.get(row["status"], row["status"])
+        label = _status_label(row["status"])
         val = f"  (${row['total_quoted']:,.0f})" if row["total_quoted"] else ""
         print(f"  {label}: {row['count']}{val}")
     print(f"\n  Open pipeline:  ${totals['open_value']:,.0f}")
@@ -89,6 +110,18 @@ def resolve_lead(name: str, lead_id: Optional[int] = None):
         print(f"   Using most recent: [{lead['id']}] {lead['name']}")
         print(f"   Tip: use --id <id> to be explicit.\n")
     return lead
+
+
+def _validate_email(val: str) -> bool:
+    return "@" in val and "." in val.split("@")[-1]
+
+
+def _validate_date(val: str) -> bool:
+    try:
+        datetime.strptime(val, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
 
 
 def _prompt_str(label: str, current: str = "", required: bool = False, max_len: int = MAX_FIELD_LENGTH) -> Optional[str]:
@@ -176,7 +209,12 @@ def cmd_add(args):
     name = _prompt_str("Name", required=True, max_len=MAX_NAME_LENGTH)
     service = _prompt_str("Service requested", required=True)
     phone = _prompt_str("Phone (optional)")
-    email = _prompt_str("Email (optional)")
+    # basic email validation
+    while True:
+        email = _prompt_str("Email (optional)")
+        if email is None or _validate_email(email):
+            break
+        print("  Invalid email format.")
     notes = _prompt_str("Notes (optional)")
     followup_days = _prompt_int(f"Follow up in how many days?", DEFAULT_FOLLOWUP_DAYS, min_val=0)
 
@@ -208,6 +246,12 @@ def cmd_edit(args):
         if val:
             if len(val) > MAX_FIELD_LENGTH:
                 print(f"  Skipping {field} — too long (max {MAX_FIELD_LENGTH} chars).")
+                continue
+            if field == "email" and not _validate_email(val):
+                print("  Skipping email — invalid format.")
+                continue
+            if field == "follow_up_after" and not _validate_date(val):
+                print("  Skipping follow_up_after — use YYYY-MM-DD format.")
                 continue
             fields[field] = val
 
@@ -338,7 +382,6 @@ def cmd_pipeline(args):
 def cmd_export(args):
     """Export all leads to CSV."""
     import csv
-    import io
 
     leads = get_all_leads(limit=100000)
     if not leads:
@@ -369,6 +412,7 @@ def build_parser():
         prog="leadclaw",
         description="Lightweight lead tracking for local service businesses.",
     )
+    parser.add_argument("--plain", action="store_true", help="Plain text output (no emoji)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("today", help="Leads due today")
@@ -376,7 +420,7 @@ def build_parser():
 
     p_list = sub.add_parser("list", help="List leads")
     p_list.add_argument("--all", action="store_true", help="Include won/lost leads")
-    p_list.add_argument("--limit", type=int, default=50, help="Max rows (default 50)")
+    p_list.add_argument("--limit", type=int, default=MAX_LIST_ROWS, help=f"Max rows (default {MAX_LIST_ROWS})")
     p_list.add_argument("--offset", type=int, default=0, help="Row offset for pagination")
 
     p_lead = sub.add_parser("lead", help="Look up a lead",
@@ -460,8 +504,10 @@ COMMAND_MAP = {
 
 
 def main():
+    global _PLAIN
     parser = build_parser()
     args = parser.parse_args()
+    _PLAIN = getattr(args, "plain", False)
     try:
         COMMAND_MAP[args.command](args)
     except KeyboardInterrupt:

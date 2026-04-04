@@ -13,12 +13,12 @@ dependencies = [
 ]
 
 [project.scripts]
-leadclaw = "commands:main"
-leadclaw-seed = "seed:main"
-leadclaw-scheduler = "scheduler:main"
+leadclaw = "leadclaw.commands:main"
+leadclaw-seed = "leadclaw.seed:main"
+leadclaw-scheduler = "leadclaw.scheduler:main"
 
-[tool.setuptools]
-py-modules = ["db", "seed", "queries", "drafting", "commands", "scheduler", "config"]
+[tool.setuptools.packages.find]
+where = ["."]
 
 [tool.ruff]
 line-length = 100

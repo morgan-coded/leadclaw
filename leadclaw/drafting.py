@@ -7,7 +7,7 @@ from typing import Optional
 
 import anthropic
 
-from config import MODEL
+from leadclaw.config import MODEL
 
 # Singleton client — created once, reused across calls
 _client: Optional[anthropic.Anthropic] = None

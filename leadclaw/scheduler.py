@@ -3,13 +3,8 @@ scheduler.py - Daily digest job (cron-ready, no side effects beyond print)
 Run once per day: python3 scheduler.py
 or via cron: 0 8 * * * cd /path/to/leadclaw && python3 scheduler.py
 """
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from commands import print_pipeline_summary
-from queries import get_pipeline_summary, get_stale_leads, mark_stale_leads_followup_due
+from leadclaw.commands import print_pipeline_summary
+from leadclaw.queries import get_pipeline_summary, get_stale_leads, mark_stale_leads_followup_due
 
 
 def run_daily_digest():

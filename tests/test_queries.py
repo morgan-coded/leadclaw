@@ -2,17 +2,12 @@
 tests/test_queries.py - Core query and DB logic tests
 """
 import os
-import sys
+import sqlite3
 
-# Must happen before any leadclaw imports
-TEST_DB = "/tmp/leadclaw_test.db"
-os.environ["LEADCLAW_DB"] = TEST_DB
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pytest
 
-import pytest  # noqa: E402
-
-import db  # noqa: E402
-import queries  # noqa: E402
+from leadclaw import db, queries
+from tests.conftest import TEST_DB
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +25,6 @@ def test_db_init_creates_file():
 
 
 def test_db_init_creates_indexes():
-    import sqlite3
     conn = sqlite3.connect(TEST_DB)
     indexes = conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     names = [row[0] for row in indexes]
@@ -160,7 +154,6 @@ def test_update_lead_fields():
 
 def test_update_lead_ignores_unknown_fields():
     lead_id, _ = queries.add_lead("Safe Lead", "roofing")
-    # should not raise, should silently ignore 'status' (not in allowed set)
     queries.update_lead(lead_id, status="won", phone="555-1111")
     lead, _ = queries.get_lead_by_name("Safe Lead")
     assert lead["status"] == "new"

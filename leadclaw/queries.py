@@ -8,8 +8,8 @@ can appear in the query. Values are always passed as parameterized bindings.
 from datetime import datetime
 from typing import Optional
 
-from config import DEFAULT_FOLLOWUP_DAYS
-from db import get_conn
+from leadclaw.config import DEFAULT_FOLLOWUP_DAYS
+from leadclaw.db import get_conn
 
 
 # ---------------------------------------------------------------------------

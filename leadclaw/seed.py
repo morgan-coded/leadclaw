@@ -1,11 +1,7 @@
 """
 seed.py - Seed demo data (10 fake leads)
 """
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from db import get_conn, init_db
+from leadclaw.db import get_conn, init_db
 from datetime import datetime, timedelta
 
 

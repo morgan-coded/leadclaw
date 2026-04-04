@@ -1,5 +1,5 @@
 """
-config.py - Shared constants and configuration
+leadclaw/config.py - Shared constants and configuration
 """
 import os
 
