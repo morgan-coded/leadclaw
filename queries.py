@@ -127,3 +127,65 @@ def get_all_active_leads():
     rows = cur.fetchall()
     conn.close()
     return rows
+
+
+def update_quote(lead_id, amount):
+    """Set or update quote amount for a lead."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE leads SET quote_amount = ?, status = 'quoted' WHERE id = ?",
+        (amount, lead_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_won(lead_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE leads SET status = 'won' WHERE id = ?", (lead_id,))
+    conn.commit()
+    conn.close()
+
+
+def mark_lost(lead_id, reason, notes=None):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE leads SET status = 'lost', lost_reason = ?, lost_reason_notes = ? WHERE id = ?",
+        (reason, notes, lead_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_closed_summary():
+    """Won/lost breakdown with revenue and loss reasons."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            status,
+            COUNT(*) as count,
+            COALESCE(SUM(quote_amount), 0) as total
+        FROM leads
+        WHERE status IN ('won', 'lost')
+        GROUP BY status
+        """
+    )
+    closed = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT lost_reason, COUNT(*) as count
+        FROM leads
+        WHERE status = 'lost' AND lost_reason IS NOT NULL
+        GROUP BY lost_reason
+        ORDER BY count DESC
+        """
+    )
+    loss_reasons = cur.fetchall()
+    conn.close()
+    return closed, loss_reasons
