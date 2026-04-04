@@ -13,8 +13,8 @@ git clone https://github.com/morgan-coded/leadclaw.git
 cd leadclaw
 pip install .
 export ANTHROPIC_API_KEY=your_key_here
-python3 seed.py        # initialize DB + seed demo data
-python3 commands.py digest
+leadclaw-seed          # initialize DB + seed demo data
+leadclaw digest
 ```
 
 ---
@@ -25,14 +25,25 @@ python3 commands.py digest
 |---|---|
 | `today` | Leads due today |
 | `stale` | Overdue follow-ups |
-| `lead <name>` | Look up a lead |
-| `draft-followup <name>` | AI-drafted follow-up text |
-| `summarize <name>` | AI narrative on a lead's situation |
+| `list [--all]` | List active leads (or all with `--all`) |
+| `lead <name\|--id>` | Look up a lead |
+| `add` | Add a new lead (interactive) |
+| `edit <name\|--id>` | Edit a lead (interactive) |
+| `delete <name\|--id>` | Delete a lead |
 | `quote <name> <amount>` | Set/update a quote |
-| `won <name>` | Mark a lead won |
-| `lost <name> <reason>` | Mark a lead lost with structured reason |
+| `won <name\|--id>` | Mark a lead won |
+| `lost <name\|--id> <reason>` | Mark a lead lost with structured reason |
+| `draft-followup <name\|--id>` | AI-drafted follow-up text |
+| `summarize <name\|--id>` | AI narrative on a lead's situation |
 | `digest` | Pipeline snapshot + auto-promote stale leads |
 | `pipeline` | Full AI pipeline analysis |
+| `export [--output file]` | Export all leads to CSV |
+
+### Global flags
+
+| Flag | Effect |
+|---|---|
+| `--plain` | Plain-text output — no emoji (great for scripts and SMS) |
 
 ---
 
@@ -71,6 +82,6 @@ See [PILOT.md](PILOT.md) for the pilot user onboarding guide.
 - [x] Week 2 — stale auto-promotion, pipeline digest, owner summary
 - [x] Week 3 — quote tracking, won/lost, AI lead summaries, pipeline analysis
 - [x] Week 4 — landing page, pilot user guide
-- [ ] Packaging — real `leadclaw` console entry point (pip installable)
+- [x] Packaging — real `leadclaw` console entry point (pip installable)
 - [ ] OpenClaw integration — `/digest`, `/lead`, `/draft-followup` as chat commands
 - [ ] Week 5+ — CSV import, web UI, SMS integration

@@ -214,6 +214,41 @@ def test_print_pipeline_summary_output(capsys):
 
 
 # ---------------------------------------------------------------------------
+# Plain-mode output tests
+# ---------------------------------------------------------------------------
+
+def test_fmt_lead_plain_no_emoji(capsys):
+    """fmt_lead() in plain mode must emit bracket labels, not emoji."""
+    import leadclaw.commands as cmd_mod
+    lead_id, _ = queries.add_lead("Plain Test", "siding")
+    lead = queries.get_lead_by_id(lead_id)
+    original = cmd_mod._PLAIN
+    try:
+        cmd_mod._PLAIN = True
+        output = cmd_mod.fmt_lead(lead)
+    finally:
+        cmd_mod._PLAIN = original
+    assert "[new]" in output
+    assert "\U0001f195" not in output  # 🆕 must be absent
+
+
+def test_print_pipeline_summary_plain_no_emoji(capsys):
+    """print_pipeline_summary() in plain mode must emit bracket labels, not emoji."""
+    import leadclaw.commands as cmd_mod
+    queries.add_lead("P Plain", "fencing")
+    summary, totals = queries.get_pipeline_summary()
+    original = cmd_mod._PLAIN
+    try:
+        cmd_mod._PLAIN = True
+        cmd_mod.print_pipeline_summary(summary, totals)
+    finally:
+        cmd_mod._PLAIN = original
+    out = capsys.readouterr().out
+    assert "[new]" in out
+    assert "\U0001f195" not in out  # 🆕 must be absent
+
+
+# ---------------------------------------------------------------------------
 # AI command mocking
 # ---------------------------------------------------------------------------
 
