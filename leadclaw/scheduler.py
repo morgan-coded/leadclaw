@@ -19,7 +19,7 @@ def run_daily_digest():
 
     stale = get_stale_leads()
     if stale:
-        print(f"\n=== Top Stale Leads ===")
+        print("\n=== Top Stale Leads ===")
         for lead in stale[:5]:
             print(f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} (overdue since {str(lead['follow_up_after'])[:10]})")
         if len(stale) > 5:

@@ -2,7 +2,7 @@
 drafting.py - Claude-powered drafts and summaries
 """
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 import anthropic
@@ -18,7 +18,7 @@ def get_client() -> anthropic.Anthropic:
     if _client is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise EnvironmentError(
+            raise OSError(
                 "ANTHROPIC_API_KEY not set.\n"
                 "Copy .env.example to .env and add your key, or run:\n"
                 "  export ANTHROPIC_API_KEY=your_key_here"
@@ -41,7 +41,7 @@ def _call(prompt: str, max_tokens: int = 300) -> Optional[str]:
             messages=[{"role": "user", "content": prompt}],
         )
         return msg.content[0].text.strip()
-    except EnvironmentError as e:
+    except OSError as e:
         print(f"Error: {e}")
         return None
     except anthropic.AuthenticationError:

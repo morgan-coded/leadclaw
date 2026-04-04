@@ -11,9 +11,9 @@ except ImportError:
     pass
 
 # AI model — override with LEADCLAW_MODEL env var
-# Default: claude-3-5-haiku-20241022 (fast, cheap, good for short drafts)
+# Default: claude-haiku-4-5-20251001 (fast, cheap, good for short drafts)
 # Update this default when a newer model is preferred, or set LEADCLAW_MODEL in .env
-MODEL = os.getenv("LEADCLAW_MODEL", "claude-3-5-haiku-20241022")
+MODEL = os.getenv("LEADCLAW_MODEL", "claude-haiku-4-5-20251001")
 
 # Shared status display labels
 STATUS_LABELS = {

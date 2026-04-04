@@ -15,25 +15,6 @@ from leadclaw.config import (
     MAX_NAME_LENGTH,
     STATUS_LABELS,
 )
-
-# Runtime flag — set by build_parser() based on --plain
-_PLAIN = False
-
-STATUS_LABELS_PLAIN = {
-    "new": "[new]",
-    "quoted": "[quoted]",
-    "followup_due": "[followup_due]",
-    "won": "[won]",
-    "lost": "[lost]",
-}
-
-
-def _status_label(status: str) -> str:
-    if _PLAIN:
-        return STATUS_LABELS_PLAIN.get(status, status)
-    return STATUS_LABELS.get(status, status)
-
-
 from leadclaw.drafting import check_api_key, draft_followup, summarize_lead, summarize_pipeline
 from leadclaw.queries import (
     add_lead,
@@ -53,6 +34,23 @@ from leadclaw.queries import (
     update_lead,
     update_quote,
 )
+
+# Runtime flag — set by build_parser() based on --plain
+_PLAIN = False
+
+STATUS_LABELS_PLAIN = {
+    "new": "[new]",
+    "quoted": "[quoted]",
+    "followup_due": "[followup_due]",
+    "won": "[won]",
+    "lost": "[lost]",
+}
+
+
+def _status_label(status: str) -> str:
+    if _PLAIN:
+        return STATUS_LABELS_PLAIN.get(status, status)
+    return STATUS_LABELS.get(status, status)
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +91,7 @@ def print_pipeline_summary(summary, totals):
 
 def resolve_lead(name: str, lead_id: Optional[int] = None):
     """Resolve name or id to a single lead, with disambiguation warning."""
-    if lead_id:
+    if lead_id is not None:
         lead = get_lead_by_id(lead_id)
         if not lead:
             print(f"No lead found with id {lead_id}.")
@@ -110,7 +108,7 @@ def resolve_lead(name: str, lead_id: Optional[int] = None):
         for match in all_matches:
             print(f"   [{match['id']}] {match['name']} — {match['service'] or 'N/A'} ({match['status']})")
         print(f"   Using most recent: [{lead['id']}] {lead['name']}")
-        print(f"   Tip: use --id <id> to be explicit.\n")
+        print("   Tip: use --id <id> to be explicit.\n")
     return lead
 
 
@@ -147,10 +145,15 @@ def _prompt_int(label: str, default: int, min_val: int = 0) -> int:
         raw = input(f"  {label} [{default}]: ").strip()
         if not raw:
             return default
-        if not raw.lstrip("-").isdigit() or int(raw) < min_val:
+        try:
+            val = int(raw)
+        except ValueError:
             print(f"  Enter a whole number >= {min_val}.")
             continue
-        return int(raw)
+        if val < min_val:
+            print(f"  Enter a whole number >= {min_val}.")
+            continue
+        return val
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +221,7 @@ def cmd_add(args):
             break
         print("  Invalid email format.")
     notes = _prompt_str("Notes (optional)")
-    followup_days = _prompt_int(f"Follow up in how many days?", DEFAULT_FOLLOWUP_DAYS, min_val=0)
+    followup_days = _prompt_int("Follow up in how many days?", DEFAULT_FOLLOWUP_DAYS, min_val=0)
 
     lead_id, dupes = add_lead(name, service, phone=phone, email=email,
                                notes=notes, followup_days=followup_days)

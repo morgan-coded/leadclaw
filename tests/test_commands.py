@@ -7,7 +7,6 @@ from unittest.mock import patch
 import pytest
 
 from leadclaw import db, queries
-from tests.conftest import TEST_DB
 from leadclaw.commands import (
     build_parser,
     cmd_digest,
@@ -15,11 +14,11 @@ from leadclaw.commands import (
     cmd_import,
     cmd_list,
     cmd_quote,
-    cmd_won,
     fmt_lead,
     print_pipeline_summary,
     resolve_lead,
 )
+from tests.conftest import TEST_DB
 
 
 @pytest.fixture(autouse=True)
