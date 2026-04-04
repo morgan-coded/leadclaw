@@ -12,10 +12,13 @@ LeadClaw is a lightweight lead tracking CLI for local service businesses. It tel
 git clone https://github.com/morgan-coded/leadclaw.git
 cd leadclaw
 pip install .
-export ANTHROPIC_API_KEY=your_key_here
-leadclaw-seed          # initialize DB + seed demo data
-leadclaw digest
+cp .env.example .env   # add your ANTHROPIC_API_KEY
+leadclaw-seed          # init DB + load demo data
+leadclaw digest        # first look at your pipeline
 ```
+
+> AI features (`draft-followup`, `summarize`, `pipeline`) require an Anthropic API key.
+> Get one free at [console.anthropic.com](https://console.anthropic.com).
 
 ---
 
@@ -47,17 +50,19 @@ leadclaw digest
 
 ---
 
-## Module Layout
+## Package Layout
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `db.py` | DB connection, schema init |
-| `seed.py` | Demo data seeder |
-| `queries.py` | SQL query functions |
-| `drafting.py` | Claude-powered follow-up drafts + summaries |
-| `commands.py` | CLI entry point |
-| `scheduler.py` | Daily digest job (cron-ready) |
-| `landing/` | Landing page HTML |
+| `leadclaw/commands.py` | CLI entry point (`leadclaw` command) |
+| `leadclaw/db.py` | SQLite connection + schema init |
+| `leadclaw/queries.py` | All SQL query functions |
+| `leadclaw/drafting.py` | Claude-powered follow-up drafts + summaries |
+| `leadclaw/seed.py` | Demo data seeder (`leadclaw-seed` command) |
+| `leadclaw/scheduler.py` | Daily digest runner (`leadclaw-scheduler` command) |
+| `leadclaw/config.py` | Shared constants (status labels, lost reasons, limits) |
+| `pyproject.toml` | Package definition + entry points |
+| `tests/` | pytest suite |
 
 ---
 
