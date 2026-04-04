@@ -5,12 +5,11 @@ Note on update_lead: the SET clause is built from an allowlisted dict, not raw u
 The allowlist (`allowed` set) prevents SQL injection — only whitelisted column names
 can appear in the query. Values are always passed as parameterized bindings.
 """
-from datetime import datetime
+from datetime import datetime  # noqa: I001
 from typing import Optional
 
 from leadclaw.config import DEFAULT_FOLLOWUP_DAYS
 from leadclaw.db import get_conn
-
 
 # ---------------------------------------------------------------------------
 # Read queries

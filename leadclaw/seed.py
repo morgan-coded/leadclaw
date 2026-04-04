@@ -1,8 +1,9 @@
 """
 seed.py - Seed demo data (10 fake leads)
 """
-from leadclaw.db import get_conn, init_db
 from datetime import datetime, timedelta
+
+from leadclaw.db import get_conn, init_db
 
 
 def seed():
