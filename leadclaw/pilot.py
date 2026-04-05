@@ -79,21 +79,41 @@ def find_duplicates(name: str, phone: Optional[str] = None) -> list:
 # ---------------------------------------------------------------------------
 
 
-def get_all_candidates(status: Optional[str] = None, limit: int = 200, offset: int = 0) -> list:
+def get_all_candidates(status: Optional[str] = None, limit: int = 200, offset: int = 0,
+                       user_id: Optional[int] = None) -> list:
     with get_conn() as conn:
-        if status:
+        if status and user_id is not None:
             return conn.execute(
-                "SELECT * FROM pilot_candidates WHERE status = ? ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM pilot_candidates WHERE status = ? AND user_id = ? "
+                "ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?",
+                (status, user_id, limit, offset),
+            ).fetchall()
+        elif status:
+            return conn.execute(
+                "SELECT * FROM pilot_candidates WHERE status = ? "
+                "ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?",
                 (status, limit, offset),
             ).fetchall()
-        return conn.execute(
-            "SELECT * FROM pilot_candidates ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
+        elif user_id is not None:
+            return conn.execute(
+                "SELECT * FROM pilot_candidates WHERE user_id = ? "
+                "ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset),
+            ).fetchall()
+        else:
+            return conn.execute(
+                "SELECT * FROM pilot_candidates ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
 
 
-def get_candidate_by_id(cid: int):
+def get_candidate_by_id(cid: int, user_id: Optional[int] = None):
     with get_conn() as conn:
+        if user_id is not None:
+            return conn.execute(
+                "SELECT * FROM pilot_candidates WHERE id = ? AND user_id = ?",
+                (cid, user_id),
+            ).fetchone()
         return conn.execute("SELECT * FROM pilot_candidates WHERE id = ?", (cid,)).fetchone()
 
 
@@ -109,8 +129,19 @@ def get_candidate_by_name(name: str):
     return rows[0], rows
 
 
-def get_followup_due() -> list:
+def get_followup_due(user_id: Optional[int] = None) -> list:
     with get_conn() as conn:
+        if user_id is not None:
+            return conn.execute(
+                """
+                SELECT * FROM pilot_candidates
+                WHERE status IN ('sent','drafted','approved')
+                  AND follow_up_after < datetime('now')
+                  AND user_id = ?
+                ORDER BY follow_up_after ASC
+                """,
+                (user_id,),
+            ).fetchall()
         return conn.execute(
             """
             SELECT * FROM pilot_candidates
@@ -121,12 +152,22 @@ def get_followup_due() -> list:
         ).fetchall()
 
 
-def get_pilot_summary() -> dict:
+def get_pilot_summary(user_id: Optional[int] = None) -> dict:
     with get_conn() as conn:
-        by_status = conn.execute(
-            "SELECT status, COUNT(*) as count FROM pilot_candidates GROUP BY status"
-        ).fetchall()
-        total = conn.execute("SELECT COUNT(*) FROM pilot_candidates").fetchone()[0]
+        if user_id is not None:
+            by_status = conn.execute(
+                "SELECT status, COUNT(*) as count FROM pilot_candidates WHERE user_id = ? GROUP BY status",
+                (user_id,),
+            ).fetchall()
+            total = conn.execute(
+                "SELECT COUNT(*) FROM pilot_candidates WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()[0]
+        else:
+            by_status = conn.execute(
+                "SELECT status, COUNT(*) as count FROM pilot_candidates GROUP BY status"
+            ).fetchall()
+            total = conn.execute("SELECT COUNT(*) FROM pilot_candidates").fetchone()[0]
     return {"total": total, "by_status": {r["status"]: r["count"] for r in by_status}}
 
 
@@ -145,6 +186,7 @@ def add_candidate(
     notes: Optional[str] = None,
     source: str = "manual_entry",
     followup_days: int = DEFAULT_FOLLOWUP_DAYS,
+    user_id: int = 1,
 ) -> tuple:
     """
     Insert a pilot candidate. Returns (id, duplicates).
@@ -159,14 +201,14 @@ def add_candidate(
             """
             INSERT INTO pilot_candidates
                 (name, business_name, phone, email, service_type, location,
-                 source, score, notes, status,
+                 source, score, notes, status, user_id,
                  follow_up_after, created_at, last_updated_at)
             VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new',
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?,
                  datetime('now', ? || ' days'), datetime('now'), datetime('now'))
             """,
             (name, business_name, phone, email, service_type, location,
-             source, s, notes, f"+{followup_days}"),
+             source, s, notes, user_id, f"+{followup_days}"),
         )
         cid = cur.lastrowid
     return cid, dupes

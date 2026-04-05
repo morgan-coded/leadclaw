@@ -16,33 +16,57 @@ from leadclaw.db import get_conn
 # ---------------------------------------------------------------------------
 
 
-def get_today_leads():
+def get_today_leads(user_id: Optional[int] = None):
     """Active leads created today or with a follow_up_after of today."""
     today = datetime.now().strftime("%Y-%m-%d")
     with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM leads
-            WHERE status NOT IN ('won', 'lost')
-              AND (date(created_at) = ? OR date(follow_up_after) = ?)
-            ORDER BY follow_up_after ASC, created_at ASC
-            """,
-            (today, today),
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status NOT IN ('won', 'lost')
+                  AND (date(created_at) = ? OR date(follow_up_after) = ?)
+                  AND user_id = ?
+                ORDER BY follow_up_after ASC, created_at ASC
+                """,
+                (today, today, user_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status NOT IN ('won', 'lost')
+                  AND (date(created_at) = ? OR date(follow_up_after) = ?)
+                ORDER BY follow_up_after ASC, created_at ASC
+                """,
+                (today, today),
+            ).fetchall()
     return rows
 
 
-def get_stale_leads():
+def get_stale_leads(user_id: Optional[int] = None):
     """Leads where follow_up_after has passed and status is not won/lost."""
     with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM leads
-            WHERE status NOT IN ('won', 'lost')
-              AND follow_up_after < datetime('now')
-            ORDER BY follow_up_after ASC
-            """
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status NOT IN ('won', 'lost')
+                  AND follow_up_after < datetime('now')
+                  AND user_id = ?
+                ORDER BY follow_up_after ASC
+                """,
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status NOT IN ('won', 'lost')
+                  AND follow_up_after < datetime('now')
+                ORDER BY follow_up_after ASC
+                """
+            ).fetchall()
     return rows
 
 
@@ -63,57 +87,106 @@ def get_lead_by_name(name: str):
     return rows[0], rows
 
 
-def get_lead_by_id(lead_id: int):
+def get_lead_by_id(lead_id: int, user_id: Optional[int] = None):
+    """Fetch a lead by id. If user_id is given, also enforce ownership."""
     with get_conn() as conn:
+        if user_id is not None:
+            return conn.execute(
+                "SELECT * FROM leads WHERE id = ? AND user_id = ?",
+                (lead_id, user_id),
+            ).fetchone()
         return conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
 
 
-def get_all_active_leads():
+def get_all_active_leads(user_id: Optional[int] = None):
     """All leads not in won/lost state."""
     with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM leads
-            WHERE status NOT IN ('won', 'lost')
-            ORDER BY follow_up_after ASC
-            """
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status NOT IN ('won', 'lost')
+                  AND user_id = ?
+                ORDER BY follow_up_after ASC
+                """,
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status NOT IN ('won', 'lost')
+                ORDER BY follow_up_after ASC
+                """
+            ).fetchall()
     return rows
 
 
-def get_all_leads(limit: int = 200, offset: int = 0):
+def get_all_leads(limit: int = 200, offset: int = 0, user_id: Optional[int] = None):
     """Every lead, all statuses, with pagination."""
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM leads ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT * FROM leads WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM leads ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
     return rows
 
 
-def get_pipeline_summary():
+def get_pipeline_summary(user_id: Optional[int] = None):
     """Return (rows_by_status, totals_row) with open/closed value split."""
     with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                status,
-                COUNT(*) as count,
-                COALESCE(SUM(quote_amount), 0) as total_quoted
-            FROM leads
-            GROUP BY status
-            ORDER BY status
-            """
-        ).fetchall()
-        totals = conn.execute(
-            """
-            SELECT
-                COALESCE(SUM(CASE WHEN status NOT IN ('won','lost') THEN quote_amount ELSE 0 END), 0) as open_value,
-                COALESCE(SUM(CASE WHEN status = 'won'  THEN quote_amount ELSE 0 END), 0) as won_value,
-                COALESCE(SUM(CASE WHEN status = 'lost' THEN quote_amount ELSE 0 END), 0) as lost_value
-            FROM leads
-            """
-        ).fetchone()
+        if user_id is not None:
+            rows = conn.execute(
+                """
+                SELECT
+                    status,
+                    COUNT(*) as count,
+                    COALESCE(SUM(quote_amount), 0) as total_quoted
+                FROM leads
+                WHERE user_id = ?
+                GROUP BY status
+                ORDER BY status
+                """,
+                (user_id,),
+            ).fetchall()
+            totals = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN status NOT IN ('won','lost') THEN quote_amount ELSE 0 END), 0) as open_value,
+                    COALESCE(SUM(CASE WHEN status = 'won'  THEN quote_amount ELSE 0 END), 0) as won_value,
+                    COALESCE(SUM(CASE WHEN status = 'lost' THEN quote_amount ELSE 0 END), 0) as lost_value
+                FROM leads
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        else:
+            rows = conn.execute(
+                """
+                SELECT
+                    status,
+                    COUNT(*) as count,
+                    COALESCE(SUM(quote_amount), 0) as total_quoted
+                FROM leads
+                GROUP BY status
+                ORDER BY status
+                """
+            ).fetchall()
+            totals = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN status NOT IN ('won','lost') THEN quote_amount ELSE 0 END), 0) as open_value,
+                    COALESCE(SUM(CASE WHEN status = 'won'  THEN quote_amount ELSE 0 END), 0) as won_value,
+                    COALESCE(SUM(CASE WHEN status = 'lost' THEN quote_amount ELSE 0 END), 0) as lost_value
+                FROM leads
+                """
+            ).fetchone()
     return rows, totals
 
 
@@ -150,6 +223,7 @@ def add_lead(
     email: Optional[str] = None,
     notes: Optional[str] = None,
     followup_days: int = DEFAULT_FOLLOWUP_DAYS,
+    user_id: int = 1,
 ):
     """Insert a new lead. Also returns existing leads with the exact same name (duplicate warning)."""
     _, existing = get_lead_by_name(name)
@@ -160,12 +234,12 @@ def add_lead(
             """
             INSERT INTO leads
                 (name, phone, email, service, status, created_at,
-                 last_contact_at, follow_up_after, notes)
+                 last_contact_at, follow_up_after, notes, user_id)
             VALUES
                 (?, ?, ?, ?, 'new', datetime('now'), datetime('now'),
-                 datetime('now', ? || ' days'), ?)
+                 datetime('now', ? || ' days'), ?, ?)
             """,
-            (name, phone, email, service, f"+{followup_days}", notes),
+            (name, phone, email, service, f"+{followup_days}", notes, user_id),
         )
         lead_id = cur.lastrowid
 

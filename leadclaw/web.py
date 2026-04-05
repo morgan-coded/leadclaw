@@ -1,36 +1,54 @@
 """
-web.py - Full CRUD web dashboard (no extra dependencies)
+web.py - Multi-tenant Flask web dashboard with email/password auth
 
-Usage:
-    leadclaw-web                    # http://localhost:7432 (localhost only)
-    leadclaw-web --port 8080
-    leadclaw-web --host 0.0.0.0     # bind all interfaces (trusted LAN only)
+Entry point:
+    leadclaw-web        # uses env vars PORT (default 7432), HOST (default 127.0.0.1)
 
-Security model:
-    Default bind is 127.0.0.1 — localhost only, no auth required.
-    Binding to 0.0.0.0 exposes unauthenticated write endpoints to your network.
-    For any exposure beyond localhost, put Nginx/Caddy in front with HTTP Basic Auth.
-    See OPENCLAW.md for deployment and backup guidance.
+Auth flow:
+    POST /signup  → create account, send verification email (or print link in dev)
+    GET  /verify/<token>  → mark email verified, log in, redirect to /
+    POST /login   → check password + email_verified, create session
+    GET  /logout  → clear session
 
-API endpoints (JSON):
-    GET  /api/summary
-    GET  /api/leads/<id>
-    GET  /api/closed
-    POST /api/leads              { name, service, phone?, email?, notes?, followup_days? }
-    POST /api/leads/<id>/edit    { name?, service?, phone?, email?, notes?, follow_up_after? }
-    POST /api/leads/<id>/quote   { amount }
-    POST /api/leads/<id>/won
-    POST /api/leads/<id>/lost    { reason, notes? }
-    POST /api/leads/<id>/delete
+All dashboard routes require @login_required AND email_verified.
+
+Environment variables:
+    LEADCLAW_SECRET_KEY  - Flask secret key (required for prod; fallback prints warning)
+    LEADCLAW_DB          - DB path (default: data/leads.db)
+    PORT                 - Bind port (default: 7432)
+    HOST                 - Bind host (default: 127.0.0.1)
+    SMTP_HOST            - SMTP server (omit to use stdout link in dev)
+    SMTP_PORT            - SMTP port (default: 587)
+    SMTP_USER            - SMTP username
+    SMTP_PASS            - SMTP password
+    APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
 """
 
-import argparse
-import json
-import re
+import os
+import secrets
+import smtplib
 import sys
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse
+from email.mime.text import MIMEText
+
+import bcrypt
+from flask import (
+    Flask,
+    redirect,
+    render_template_string,
+    request,
+    url_for,
+    jsonify,
+    session,
+)
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    current_user,
+    login_required,
+    login_user,
+    logout_user,
+)
 
 from leadclaw.config import (
     DEFAULT_FOLLOWUP_DAYS,
@@ -38,7 +56,14 @@ from leadclaw.config import (
     MAX_FIELD_LENGTH,
     MAX_NAME_LENGTH,
 )
-from leadclaw.db import init_db
+from leadclaw.db import (
+    create_user,
+    get_user_by_email,
+    get_user_by_id,
+    get_user_by_verify_token,
+    init_db,
+    verify_user_email,
+)
 from leadclaw.queries import (
     add_lead,
     delete_lead,
@@ -55,10 +80,54 @@ from leadclaw.queries import (
 )
 import leadclaw.pilot as _pilot
 
-DEFAULT_PORT = 7432
+import json
+import re
 
 # ---------------------------------------------------------------------------
-# Validation helpers (mirrors CLI)
+# Flask app setup
+# ---------------------------------------------------------------------------
+
+_SECRET_KEY = os.environ.get("LEADCLAW_SECRET_KEY")
+if not _SECRET_KEY:
+    _SECRET_KEY = "dev-insecure-key-change-me"
+    print(
+        "WARNING: LEADCLAW_SECRET_KEY not set. Using insecure default. "
+        "Set it in your environment before deploying.",
+        file=sys.stderr,
+    )
+
+app = Flask(__name__)
+app.secret_key = _SECRET_KEY
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+
+# ---------------------------------------------------------------------------
+# User model for flask-login
+# ---------------------------------------------------------------------------
+
+
+class User(UserMixin):
+    def __init__(self, row):
+        self.id = row["id"]
+        self.email = row["email"]
+        self.email_verified = bool(row["email_verified"])
+
+    def get_id(self):
+        return str(self.id)
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    row = get_user_by_id(int(user_id))
+    if row is None:
+        return None
+    return User(row)
+
+
+# ---------------------------------------------------------------------------
+# Validation helpers
 # ---------------------------------------------------------------------------
 
 
@@ -75,8 +144,258 @@ def _valid_date(val: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# JSON API helpers
+# Email verification helpers
 # ---------------------------------------------------------------------------
+
+
+def _send_verification_email(to_email: str, token: str):
+    """Send verification email via SMTP or print to stdout for local dev."""
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+    link = f"{app_url}/verify/{token}"
+
+    smtp_host = os.environ.get("SMTP_HOST")
+    if not smtp_host:
+        # Dev mode: just print the link
+        print(f"\n[DEV] Email verification link for {to_email}:\n  {link}\n", file=sys.stderr)
+        return
+
+    smtp_port = int(os.environ.get("SMTP_PORT", 587))
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+
+    msg = MIMEText(
+        f"Click the link below to verify your LeadClaw account:\n\n{link}\n\n"
+        "If you didn't create this account, you can ignore this email.",
+        "plain",
+    )
+    msg["Subject"] = "Verify your LeadClaw account"
+    msg["From"] = smtp_user
+    msg["To"] = to_email
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, [to_email], msg.as_string())
+    except Exception as exc:
+        # Don't crash signup if email fails — log and continue
+        print(f"WARNING: Failed to send verification email: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Auth page HTML templates
+# ---------------------------------------------------------------------------
+
+_AUTH_CSS = """
+<style>
+:root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--text:#e8eaf0;--muted:#6b7280;--accent:#6366f1;--accent-h:#4f52d1;--red:#ef4444;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:14px;
+     display:flex;align-items:center;justify-content:center;min-height:100vh;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px 36px;
+      width:100%;max-width:400px;}
+h1{font-size:22px;font-weight:700;margin-bottom:6px;}
+.sub{color:var(--muted);font-size:13px;margin-bottom:24px;}
+.form-group{margin-bottom:16px;}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;}
+input{width:100%;padding:9px 12px;background:#22263a;border:1px solid var(--border);border-radius:6px;
+      color:var(--text);font-size:13px;font-family:inherit;outline:none;}
+input:focus{border-color:var(--accent);}
+.btn{display:block;width:100%;padding:10px;border-radius:6px;border:none;
+     background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;
+     font-family:inherit;margin-top:8px;}
+.btn:hover{background:var(--accent-h);}
+.err{background:#3b0d0d;border:1px solid var(--red);color:#fca5a5;border-radius:6px;
+     padding:9px 12px;font-size:13px;margin-bottom:16px;}
+.link{text-align:center;margin-top:18px;font-size:12px;color:var(--muted);}
+.link a{color:var(--accent);text-decoration:none;}
+.link a:hover{text-decoration:underline;}
+.info{background:#1e3a5f;border:1px solid #1d4ed8;color:#93c5fd;border-radius:6px;
+      padding:9px 12px;font-size:13px;margin-bottom:16px;}
+</style>
+"""
+
+LOGIN_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>LeadClaw — Sign In</title>"
+    + _AUTH_CSS
+    + "</head><body><div class='card'>"
+    "<h1>🦞 LeadClaw</h1>"
+    "<div class='sub'>Sign in to your account</div>"
+    "{% if error %}<div class='err'>{{ error }}</div>{% endif %}"
+    "{% if info %}<div class='info'>{{ info }}</div>{% endif %}"
+    "<form method='post'>"
+    "<div class='form-group'><label>Email</label>"
+    "<input type='email' name='email' required autofocus value='{{ email|default(\"\") }}'></div>"
+    "<div class='form-group'><label>Password</label>"
+    "<input type='password' name='password' required></div>"
+    "<button class='btn' type='submit'>Sign In</button>"
+    "</form>"
+    "<div class='link'>No account? <a href='/signup'>Create one</a></div>"
+    "</div></body></html>"
+)
+
+SIGNUP_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>LeadClaw — Create Account</title>"
+    + _AUTH_CSS
+    + "</head><body><div class='card'>"
+    "<h1>🦞 LeadClaw</h1>"
+    "<div class='sub'>Create your account</div>"
+    "{% if error %}<div class='err'>{{ error }}</div>{% endif %}"
+    "<form method='post'>"
+    "<div class='form-group'><label>Email</label>"
+    "<input type='email' name='email' required autofocus value='{{ email|default(\"\") }}'></div>"
+    "<div class='form-group'><label>Password</label>"
+    "<input type='password' name='password' required></div>"
+    "<div class='form-group'><label>Confirm Password</label>"
+    "<input type='password' name='confirm' required></div>"
+    "<button class='btn' type='submit'>Create Account</button>"
+    "</form>"
+    "<div class='link'>Already have an account? <a href='/login'>Sign in</a></div>"
+    "</div></body></html>"
+)
+
+CHECK_EMAIL_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>LeadClaw — Verify Email</title>"
+    + _AUTH_CSS
+    + "</head><body><div class='card'>"
+    "<h1>🦞 LeadClaw</h1>"
+    "<div class='info' style='margin-top:16px'>"
+    "📧 We sent a verification link to <strong>{{ email }}</strong>.<br><br>"
+    "Click the link in the email to activate your account."
+    "</div>"
+    "<div class='link'>Wrong email? <a href='/signup'>Start over</a> &nbsp;·&nbsp; "
+    "<a href='/login'>Sign in</a></div>"
+    "</div></body></html>"
+)
+
+UNVERIFIED_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>LeadClaw — Verify Email</title>"
+    + _AUTH_CSS
+    + "</head><body><div class='card'>"
+    "<h1>🦞 LeadClaw</h1>"
+    "<div class='info' style='margin-top:16px'>"
+    "📧 Please verify your email before accessing the dashboard.<br><br>"
+    "Check your inbox for a verification link."
+    "</div>"
+    "<div class='link'><a href='/logout'>Sign out</a></div>"
+    "</div></body></html>"
+)
+
+# ---------------------------------------------------------------------------
+# Auth routes
+# ---------------------------------------------------------------------------
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+
+    if request.method == "GET":
+        return render_template_string(SIGNUP_HTML)
+
+    email = (request.form.get("email") or "").strip().lower()
+    password = request.form.get("password") or ""
+    confirm = request.form.get("confirm") or ""
+
+    if not email or not _valid_email(email):
+        return render_template_string(SIGNUP_HTML, error="Enter a valid email address.", email=email)
+    if len(password) < 8:
+        return render_template_string(SIGNUP_HTML, error="Password must be at least 8 characters.", email=email)
+    if password != confirm:
+        return render_template_string(SIGNUP_HTML, error="Passwords do not match.", email=email)
+    if get_user_by_email(email):
+        return render_template_string(SIGNUP_HTML, error="An account with that email already exists.", email=email)
+
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    token = secrets.token_urlsafe(32)
+    create_user(email, pw_hash, token)
+    _send_verification_email(email, token)
+
+    return render_template_string(CHECK_EMAIL_HTML, email=email)
+
+
+@app.route("/verify/<token>")
+def verify_email(token):
+    row = get_user_by_verify_token(token)
+    if not row:
+        return render_template_string(
+            LOGIN_HTML,
+            error="Invalid or expired verification link.",
+        )
+    verify_user_email(row["id"])
+    # Re-fetch so email_verified is set
+    updated = get_user_by_id(row["id"])
+    user = User(updated)
+    login_user(user)
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+
+    info = request.args.get("info")
+
+    if request.method == "GET":
+        return render_template_string(LOGIN_HTML, info=info)
+
+    email = (request.form.get("email") or "").strip().lower()
+    password = request.form.get("password") or ""
+
+    row = get_user_by_email(email)
+    if not row or not bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
+        return render_template_string(LOGIN_HTML, error="Invalid email or password.", email=email)
+
+    user = User(row)
+    login_user(user)
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
+
+
+# ---------------------------------------------------------------------------
+# Verified-only decorator helper
+# ---------------------------------------------------------------------------
+
+
+def verified_required(f):
+    """Wrap a view so it also requires email_verified."""
+    from functools import wraps
+
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.email_verified:
+            return render_template_string(UNVERIFIED_HTML)
+        return f(*args, **kwargs)
+
+    return decorated
+
+
+# ---------------------------------------------------------------------------
+# JSON / data helpers
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+_LOST_REASONS_JS = _json.dumps(LOST_REASONS)
+_MAX_NAME_JS = MAX_NAME_LENGTH
+_MAX_FIELD_JS = MAX_FIELD_LENGTH
 
 
 def _lead_to_dict(row) -> dict:
@@ -93,34 +412,6 @@ def _lead_to_dict(row) -> dict:
         "lost_reason": row["lost_reason"],
         "lost_reason_notes": row["lost_reason_notes"] if "lost_reason_notes" in row.keys() else None,
     }
-
-
-def api_summary() -> dict:
-    summary_rows, totals = get_pipeline_summary()
-    today = [_lead_to_dict(r) for r in get_today_leads()]
-    stale = [_lead_to_dict(r) for r in get_stale_leads()]
-    active = [_lead_to_dict(r) for r in get_all_active_leads()]
-    by_status = {row["status"]: {"count": row["count"], "total": row["total_quoted"]}
-                 for row in summary_rows}
-    return {
-        "pipeline": {
-            "open_value": totals["open_value"],
-            "won_value": totals["won_value"],
-            "lost_value": totals["lost_value"],
-            "by_status": by_status,
-        },
-        "today": today,
-        "stale": stale,
-        "active": active,
-    }
-
-
-def api_closed() -> dict:
-    """All won/lost leads for the closed-leads browser view."""
-    all_leads = get_all_leads(limit=10000)
-    closed = [_lead_to_dict(r) for r in all_leads
-              if r["status"] in ("won", "lost")]
-    return {"closed": closed}
 
 
 def _candidate_to_dict(row) -> dict:
@@ -145,10 +436,36 @@ def _candidate_to_dict(row) -> dict:
     }
 
 
-def api_pilot_candidates(status: str = None) -> dict:
-    rows = _pilot.get_all_candidates(status=status or None, limit=500)
-    summary = _pilot.get_pilot_summary()
-    followups = _pilot.get_followup_due()
+def api_summary(user_id: int) -> dict:
+    summary_rows, totals = get_pipeline_summary(user_id=user_id)
+    today = [_lead_to_dict(r) for r in get_today_leads(user_id=user_id)]
+    stale = [_lead_to_dict(r) for r in get_stale_leads(user_id=user_id)]
+    active = [_lead_to_dict(r) for r in get_all_active_leads(user_id=user_id)]
+    by_status = {row["status"]: {"count": row["count"], "total": row["total_quoted"]}
+                 for row in summary_rows}
+    return {
+        "pipeline": {
+            "open_value": totals["open_value"],
+            "won_value": totals["won_value"],
+            "lost_value": totals["lost_value"],
+            "by_status": by_status,
+        },
+        "today": today,
+        "stale": stale,
+        "active": active,
+    }
+
+
+def api_closed(user_id: int) -> dict:
+    all_leads = get_all_leads(limit=10000, user_id=user_id)
+    closed = [_lead_to_dict(r) for r in all_leads if r["status"] in ("won", "lost")]
+    return {"closed": closed}
+
+
+def api_pilot_candidates(user_id: int, status: str = None) -> dict:
+    rows = _pilot.get_all_candidates(status=status or None, limit=500, user_id=user_id)
+    summary = _pilot.get_pilot_summary(user_id=user_id)
+    followups = _pilot.get_followup_due(user_id=user_id)
     return {
         "candidates": [_candidate_to_dict(r) for r in rows],
         "summary": summary,
@@ -157,14 +474,12 @@ def api_pilot_candidates(status: str = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# HTML dashboard
+# Dashboard HTML (injected with user email + sign-out link)
 # ---------------------------------------------------------------------------
 
-_LOST_REASONS_JS = json.dumps(LOST_REASONS)
-_MAX_NAME_JS = MAX_NAME_LENGTH
-_MAX_FIELD_JS = MAX_FIELD_LENGTH
-
-DASHBOARD_HTML = """<!DOCTYPE html>
+def _build_dashboard_html(user_email: str) -> str:
+    """Return the full dashboard HTML with user email and signout link injected."""
+    return """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -177,6 +492,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   header{padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
   header h1{font-size:18px;font-weight:700;letter-spacing:-.3px;}
   header span{color:var(--muted);font-size:12px;}
+  .header-user{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted);}
+  .header-user a{color:var(--muted);text-decoration:none;}
+  .header-user a:hover{color:var(--text);}
   .btn{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s;}
   .btn:hover{border-color:var(--accent);color:var(--accent);}
   .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;}
@@ -185,7 +503,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .btn-danger{color:var(--red)!important;}
   .btn-danger:hover{border-color:var(--red)!important;}
   .btn-active{border-color:var(--accent);color:var(--accent);}
-  .ml-auto{margin-left:auto;}
   .main{padding:24px;max-width:1140px;margin:0 auto;}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:28px;}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 18px;}
@@ -216,7 +533,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .badge-lost{background:#3b0d0d;color:#ef4444;}
   .empty{color:var(--muted);font-style:italic;padding:10px 0;}
   .warn-banner{background:#2a1a0a;border:1px solid #7c4a00;border-radius:7px;padding:10px 14px;font-size:12px;color:#f59e0b;margin-bottom:16px;}
-  /* Modal */
   .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;}
   .overlay.open{display:flex;}
   .modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto;}
@@ -237,7 +553,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <header>
   <h1>🦞 LeadClaw</h1>
   <span id="updated">Loading…</span>
-  <button class="btn ml-auto" onclick="load()">Refresh</button>
+  <div class="header-user">
+    <span>""" + user_email + """</span>
+    <a href="/logout">Sign out</a>
+  </div>
+  <button class="btn" onclick="load()">Refresh</button>
   <button class="btn btn-primary" onclick="openAdd()">+ Add Lead</button>
 </header>
 <div class="main">
@@ -393,7 +713,6 @@ const LOST_REASONS=""" + _LOST_REASONS_JS + """;
 const MAX_NAME=""" + str(_MAX_NAME_JS) + """;
 const MAX_FIELD=""" + str(_MAX_FIELD_JS) + r""";
 
-// Populate lost reason select
 (function(){
   const sel=document.getElementById('lost-reason');
   LOST_REASONS.forEach(r=>{const o=document.createElement('option');o.value=r;o.textContent=r.replace(/_/g,' ');sel.appendChild(o);});
@@ -410,11 +729,9 @@ function toast(msg,err=false){
   t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);
 }
 
-// ---- Client-side validation (mirrors server) ----
 function validEmail(v){return v.includes('@')&&v.split('@').pop().includes('.');}
 function validDate(v){return /^\d{4}-\d{2}-\d{2}$/.test(v)&&!isNaN(Date.parse(v));}
 
-// ---- Tabs ----
 function switchTab(name){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['pipeline','closed','pilot'][i]===name));
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));
@@ -422,7 +739,6 @@ function switchTab(name){
   if(name==='pilot')loadPilot();
 }
 
-// ---- Render ----
 function renderLead(l,showActions=true){
   const due=l.follow_up_after?`<div class="lead-meta ${l.status==='followup_due'?'yellow':''}">${l.follow_up_after}</div>`:'';
   const quote=l.quote_amount?`<div class="lead-meta">${fmt(l.quote_amount)}</div>`:'';
@@ -483,11 +799,9 @@ async function loadClosed(){
   }catch(e){document.getElementById('closed').innerHTML='<div class="empty">Error loading closed leads.</div>';}
 }
 
-// ---- Modal helpers ----
 function closeModal(e){if(e.target===e.currentTarget)e.target.classList.remove('open');}
 function closeOverlay(id){document.getElementById(id).classList.remove('open');}
 
-// ---- Add Lead ----
 function openAdd(){
   document.getElementById('modal-title').textContent='Add Lead';
   document.getElementById('edit-id').value='';
@@ -500,7 +814,6 @@ function openAdd(){
   document.getElementById('modal-edit').classList.add('open');
 }
 
-// ---- Edit Lead ----
 function openEdit(l){
   document.getElementById('modal-title').textContent='Edit Lead';
   document.getElementById('edit-id').value=l.id;
@@ -543,7 +856,6 @@ async function submitEdit(){
   const j=await r.json();
   if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
 
-  // Show duplicate warning if server flagged matches
   if(!id&&j.duplicates&&j.duplicates.length){
     const w=document.getElementById('dup-warn');
     w.textContent=`⚠ ${j.duplicates.length} existing lead(s) with the same name: `+j.duplicates.map(d=>d.name).join(', ');
@@ -555,7 +867,6 @@ async function submitEdit(){
   }
 }
 
-// ---- Quote ----
 function openQuote(id){
   document.getElementById('quote-id').value=id;
   document.getElementById('quote-amount').value='';
@@ -573,14 +884,12 @@ async function submitQuote(){
   closeOverlay('modal-quote');toast('Quote set.');load();
 }
 
-// ---- Won ----
 async function doWon(id,name){
   if(!confirm(`Mark "${name}" as WON?`))return;
   const r=await fetch(`/api/leads/${id}/won`,{method:'POST'});
   if(r.ok){toast('Marked won! 🎉');load();}else{toast('Error',true);}
 }
 
-// ---- Lost ----
 function openLost(id){
   document.getElementById('lost-id').value=id;
   document.getElementById('lost-reason').value=LOST_REASONS[0];
@@ -601,7 +910,6 @@ async function submitLost(){
   closeOverlay('modal-lost');toast('Marked lost.');load();
 }
 
-// ---- Delete ----
 async function doDelete(id,name){
   if(!confirm(`Delete "${name}"? This cannot be undone.`))return;
   const r=await fetch(`/api/leads/${id}/delete`,{method:'POST'});
@@ -638,17 +946,14 @@ async function loadPilot(){
   const url='/api/pilot'+(status?'?status='+encodeURIComponent(status):'');
   try{
     const d=await fetch(url).then(r=>r.json());
-    // Summary bar
     const bs=d.summary.by_status||{};
     const parts=PILOT_STATUSES.filter(s=>bs[s]).map(s=>`${s}: ${bs[s]}`);
     document.getElementById('pilot-summary-bar').textContent=`${d.summary.total} total — `+parts.join(' · ');
-    // Follow-up banner
     const fb=document.getElementById('pilot-followup-banner');
     if(d.followup_count>0){
       fb.textContent=`⚠ ${d.followup_count} candidate(s) overdue for follow-up`;
       fb.style.display='';
     }else{fb.style.display='none';}
-    // Table
     const tbody=document.getElementById('pilot-tbody');
     const empty=document.getElementById('pilot-empty');
     if(!d.candidates.length){tbody.innerHTML='';empty.style.display='';return;}
@@ -662,7 +967,6 @@ async function loadPilot(){
       const overdue=c.follow_up_after&&c.follow_up_after<new Date().toISOString().slice(0,10);
       const dueEl=c.follow_up_after?`<span style="font-size:11px;color:${overdue?'var(--yellow)':'var(--muted)'}">${c.follow_up_after}</span>`:"";
       const cj=esc(JSON.stringify(c));
-      // Action buttons
       const canDraft=['new','drafted'].includes(c.status);
       const canApprove=c.status==='drafted'&&c.outreach_draft;
       const canSent=['approved','drafted'].includes(c.status);
@@ -747,281 +1051,298 @@ load();
 </body>
 </html>"""
 
+
+# Store this for test assertions
+DASHBOARD_HTML = _build_dashboard_html("user@example.com")
+
 # ---------------------------------------------------------------------------
-# HTTP handler
+# Dashboard routes
 # ---------------------------------------------------------------------------
 
-_ID_PATTERN = re.compile(r"^/api/leads/(\d+)/(\w+)$")
-_PILOT_ID_PATTERN = re.compile(r"^/api/pilot/(\d+)/([\w-]+)$")
-_ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+@app.route("/")
+@login_required
+@verified_required
+def dashboard():
+    return _build_dashboard_html(current_user.email)
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):
+@app.route("/api/summary")
+@login_required
+@verified_required
+def route_api_summary():
+    try:
+        return jsonify(api_summary(current_user.id))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/closed")
+@login_required
+@verified_required
+def route_api_closed():
+    try:
+        return jsonify(api_closed(current_user.id))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pilot")
+@login_required
+@verified_required
+def route_api_pilot():
+    status = request.args.get("status") or None
+    try:
+        return jsonify(api_pilot_candidates(current_user.id, status=status))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/leads/<int:lead_id>")
+@login_required
+@verified_required
+def route_get_lead(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if lead:
+        return jsonify(_lead_to_dict(lead))
+    return jsonify({"error": "Not found"}), 404
+
+
+# ---------------------------------------------------------------------------
+# Lead write routes
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/leads", methods=["POST"])
+@login_required
+@verified_required
+def route_add_lead():
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    service = (body.get("service") or "").strip()
+    if not name or not service:
+        return jsonify({"error": "name and service are required"}), 400
+    if len(name) > MAX_NAME_LENGTH:
+        return jsonify({"error": f"name max {MAX_NAME_LENGTH} chars"}), 400
+    phone = (body.get("phone") or "").strip() or None
+    email = (body.get("email") or "").strip() or None
+    if email and not _valid_email(email):
+        return jsonify({"error": "invalid email format"}), 400
+    notes = (body.get("notes") or "").strip() or None
+    if notes and len(notes) > MAX_FIELD_LENGTH:
+        return jsonify({"error": f"notes max {MAX_FIELD_LENGTH} chars"}), 400
+    try:
+        followup_days = int(body.get("followup_days") or DEFAULT_FOLLOWUP_DAYS)
+        if followup_days < 0:
+            followup_days = DEFAULT_FOLLOWUP_DAYS
+    except (ValueError, TypeError):
+        followup_days = DEFAULT_FOLLOWUP_DAYS
+
+    lead_id, dupes = add_lead(name, service, phone=phone, email=email,
+                               notes=notes, followup_days=followup_days,
+                               user_id=current_user.id)
+    resp = {"id": lead_id}
+    if dupes:
+        resp["duplicates"] = [{"id": d["id"], "name": d["name"]} for d in dupes]
+    return jsonify(resp), 201
+
+
+@app.route("/api/leads/<int:lead_id>/edit", methods=["POST"])
+@login_required
+@verified_required
+def route_edit_lead(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": f"Lead {lead_id} not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    fields = {}
+    for field in ("name", "service", "phone", "email", "notes", "follow_up_after"):
+        val = body.get(field)
+        if val is not None:
+            val = str(val).strip() or None
+            if val is None:
+                continue
+            if field == "name" and len(val) > MAX_NAME_LENGTH:
+                return jsonify({"error": f"name max {MAX_NAME_LENGTH} chars"}), 400
+            if field not in ("name",) and len(val) > MAX_FIELD_LENGTH:
+                return jsonify({"error": f"{field} max {MAX_FIELD_LENGTH} chars"}), 400
+            if field == "email" and not _valid_email(val):
+                return jsonify({"error": "invalid email format"}), 400
+            if field == "follow_up_after" and not _valid_date(val):
+                return jsonify({"error": "follow_up_after must be YYYY-MM-DD"}), 400
+            fields[field] = val
+    update_lead(lead_id, **fields)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/leads/<int:lead_id>/quote", methods=["POST"])
+@login_required
+@verified_required
+def route_quote_lead(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": f"Lead {lead_id} not found"}), 404
+    body = request.get_json(silent=True) or {}
+    try:
+        amount = float(body.get("amount"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "amount must be a number"}), 400
+    if amount <= 0:
+        return jsonify({"error": "amount must be > 0"}), 400
+    update_quote(lead_id, amount)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/leads/<int:lead_id>/won", methods=["POST"])
+@login_required
+@verified_required
+def route_won_lead(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": f"Lead {lead_id} not found"}), 404
+    mark_won(lead_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/leads/<int:lead_id>/lost", methods=["POST"])
+@login_required
+@verified_required
+def route_lost_lead(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": f"Lead {lead_id} not found"}), 404
+    body = request.get_json(silent=True) or {}
+    reason = (body.get("reason") or "").strip()
+    if reason not in LOST_REASONS:
+        return jsonify({"error": f"reason must be one of: {', '.join(LOST_REASONS)}"}), 400
+    notes = (body.get("notes") or "").strip() or None
+    if reason == "other" and not notes:
+        return jsonify({"error": "notes required when reason is 'other'"}), 400
+    mark_lost(lead_id, reason, notes=notes)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/leads/<int:lead_id>/delete", methods=["POST"])
+@login_required
+@verified_required
+def route_delete_lead(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": f"Lead {lead_id} not found"}), 404
+    delete_lead(lead_id)
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Pilot write routes
+# ---------------------------------------------------------------------------
+
+
+def _get_pilot_candidate(cid: int):
+    """Fetch candidate and verify ownership."""
+    return _pilot.get_candidate_by_id(cid, user_id=current_user.id)
+
+
+@app.route("/api/pilot/<int:cid>/save-draft", methods=["POST"])
+@login_required
+@verified_required
+def route_pilot_save_draft(cid):
+    candidate = _get_pilot_candidate(cid)
+    if not candidate:
+        return jsonify({"error": f"Candidate {cid} not found"}), 404
+    body = request.get_json(silent=True) or {}
+    draft = (body.get("draft") or "").strip()
+    if not draft:
+        return jsonify({"error": "draft is required"}), 400
+    _pilot.set_draft(cid, draft)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pilot/<int:cid>/save-and-approve", methods=["POST"])
+@login_required
+@verified_required
+def route_pilot_save_and_approve(cid):
+    candidate = _get_pilot_candidate(cid)
+    if not candidate:
+        return jsonify({"error": f"Candidate {cid} not found"}), 404
+    body = request.get_json(silent=True) or {}
+    draft = (body.get("draft") or "").strip()
+    if not draft:
+        return jsonify({"error": "draft is required"}), 400
+    _pilot.set_draft(cid, draft)
+    _pilot.set_status(cid, "approved")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pilot/<int:cid>/approve", methods=["POST"])
+@login_required
+@verified_required
+def route_pilot_approve(cid):
+    candidate = _get_pilot_candidate(cid)
+    if not candidate:
+        return jsonify({"error": f"Candidate {cid} not found"}), 404
+    if not candidate["outreach_draft"]:
+        return jsonify({"error": "No draft to approve. Save a draft first."}), 400
+    _pilot.set_status(cid, "approved")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pilot/<int:cid>/mark-sent", methods=["POST"])
+@login_required
+@verified_required
+def route_pilot_mark_sent(cid):
+    candidate = _get_pilot_candidate(cid)
+    if not candidate:
+        return jsonify({"error": f"Candidate {cid} not found"}), 404
+    _pilot.set_status(cid, "sent", contacted=True)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pilot/<int:cid>/log-reply", methods=["POST"])
+@login_required
+@verified_required
+def route_pilot_log_reply(cid):
+    candidate = _get_pilot_candidate(cid)
+    if not candidate:
+        return jsonify({"error": f"Candidate {cid} not found"}), 404
+    body = request.get_json(silent=True) or {}
+    reply = (body.get("reply") or "").strip()
+    if not reply:
+        return jsonify({"error": "reply text is required"}), 400
+    _pilot.log_reply(cid, reply)
+    summary = None
+    try:
+        from leadclaw.drafting import check_api_key, summarize_pilot_reply
+        if check_api_key():
+            summary = summarize_pilot_reply(dict(candidate), reply)
+            if summary:
+                _pilot.set_reply_summary(cid, summary)
+    except Exception:
         pass
+    return jsonify({"ok": True, "summary": summary})
 
-    def _check_host(self) -> bool:
-        """Reject requests with a Host header pointing at a non-local host (DNS rebinding guard)."""
-        host_header = self.headers.get("Host", "")
-        hostname = host_header.split(":")[0]
-        if hostname and hostname not in _ALLOWED_HOSTS:
-            self.send_json({"error": "Forbidden"}, 403)
-            return False
-        return True
 
-    def send_json(self, data: dict, status: int = 200):
-        body = json.dumps(data).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        # No wildcard CORS — omit the header for localhost-only operation
-        self.end_headers()
-        self.wfile.write(body)
+@app.route("/api/pilot/<int:cid>/convert", methods=["POST"])
+@login_required
+@verified_required
+def route_pilot_convert(cid):
+    candidate = _get_pilot_candidate(cid)
+    if not candidate:
+        return jsonify({"error": f"Candidate {cid} not found"}), 404
+    _pilot.set_status(cid, "converted")
+    return jsonify({"ok": True})
 
-    def send_html(self, html: str):
-        body = html.encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
-    def read_json_body(self) -> dict:
-        length = int(self.headers.get("Content-Length", 0))
-        if not length:
-            return {}
-        return json.loads(self.rfile.read(length))
-
-    def do_GET(self):
-        if not self._check_host():
-            return
-        path = urlparse(self.path).path
-        if path in ("/", "/dashboard"):
-            self.send_html(DASHBOARD_HTML)
-        elif path == "/api/summary":
-            try:
-                self.send_json(api_summary())
-            except Exception as e:
-                self.send_json({"error": str(e)}, 500)
-        elif path == "/api/closed":
-            try:
-                self.send_json(api_closed())
-            except Exception as e:
-                self.send_json({"error": str(e)}, 500)
-        elif path == "/api/pilot" or path.startswith("/api/pilot?"):
-            from urllib.parse import parse_qs
-            qs = parse_qs(urlparse(self.path).query)
-            status = (qs.get("status") or [None])[0]
-            try:
-                self.send_json(api_pilot_candidates(status))
-            except Exception as e:
-                self.send_json({"error": str(e)}, 500)
-        elif re.match(r"^/api/leads/(\d+)$", path):
-            lead_id = int(path.split("/")[-1])
-            lead = get_lead_by_id(lead_id)
-            if lead:
-                self.send_json(_lead_to_dict(lead))
-            else:
-                self.send_json({"error": "Not found"}, 404)
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def do_POST(self):
-        if not self._check_host():
-            return
-        path = urlparse(self.path).path
-        try:
-            body = self.read_json_body()
-        except (json.JSONDecodeError, ValueError):
-            self.send_json({"error": "Invalid JSON"}, 400)
-            return
-
-        # Pilot routes
-        if _PILOT_ID_PATTERN.match(path):
-            self._handle_pilot_post(path, body)
-            return
-
-        # POST /api/leads — add new lead
-        if path == "/api/leads":
-            name = (body.get("name") or "").strip()
-            service = (body.get("service") or "").strip()
-            if not name or not service:
-                self.send_json({"error": "name and service are required"}, 400)
-                return
-            if len(name) > MAX_NAME_LENGTH:
-                self.send_json({"error": f"name max {MAX_NAME_LENGTH} chars"}, 400)
-                return
-            phone = (body.get("phone") or "").strip() or None
-            email = (body.get("email") or "").strip() or None
-            if email and not _valid_email(email):
-                self.send_json({"error": "invalid email format"}, 400)
-                return
-            notes = (body.get("notes") or "").strip() or None
-            if notes and len(notes) > MAX_FIELD_LENGTH:
-                self.send_json({"error": f"notes max {MAX_FIELD_LENGTH} chars"}, 400)
-                return
-            try:
-                followup_days = int(body.get("followup_days") or DEFAULT_FOLLOWUP_DAYS)
-                if followup_days < 0:
-                    followup_days = DEFAULT_FOLLOWUP_DAYS
-            except (ValueError, TypeError):
-                followup_days = DEFAULT_FOLLOWUP_DAYS
-            lead_id, dupes = add_lead(name, service, phone=phone, email=email,
-                                      notes=notes, followup_days=followup_days)
-            resp = {"id": lead_id}
-            if dupes:
-                resp["duplicates"] = [{"id": d["id"], "name": d["name"]} for d in dupes]
-            self.send_json(resp, 201)
-            return
-
-        # POST /api/leads/<id>/<action>
-        m = _ID_PATTERN.match(path)
-        if not m:
-            self.send_json({"error": "Not found"}, 404)
-            return
-
-        lead_id, action = int(m.group(1)), m.group(2)
-        lead = get_lead_by_id(lead_id)
-        if not lead:
-            self.send_json({"error": f"Lead {lead_id} not found"}, 404)
-            return
-
-        if action == "edit":
-            fields = {}
-            for field in ("name", "service", "phone", "email", "notes", "follow_up_after"):
-                val = body.get(field)
-                if val is not None:
-                    val = str(val).strip() or None
-                    if val is None:
-                        continue
-                    if field == "name" and len(val) > MAX_NAME_LENGTH:
-                        self.send_json({"error": f"name max {MAX_NAME_LENGTH} chars"}, 400)
-                        return
-                    if field not in ("name",) and len(val) > MAX_FIELD_LENGTH:
-                        self.send_json({"error": f"{field} max {MAX_FIELD_LENGTH} chars"}, 400)
-                        return
-                    if field == "email" and not _valid_email(val):
-                        self.send_json({"error": "invalid email format"}, 400)
-                        return
-                    if field == "follow_up_after" and not _valid_date(val):
-                        self.send_json({"error": "follow_up_after must be YYYY-MM-DD"}, 400)
-                        return
-                    fields[field] = val
-            update_lead(lead_id, **fields)
-            self.send_json({"ok": True})
-
-        elif action == "quote":
-            amount = body.get("amount")
-            try:
-                amount = float(amount)
-            except (TypeError, ValueError):
-                self.send_json({"error": "amount must be a number"}, 400)
-                return
-            if amount <= 0:
-                self.send_json({"error": "amount must be > 0"}, 400)
-                return
-            update_quote(lead_id, amount)
-            self.send_json({"ok": True})
-
-        elif action == "won":
-            mark_won(lead_id)
-            self.send_json({"ok": True})
-
-        elif action == "lost":
-            reason = (body.get("reason") or "").strip()
-            if reason not in LOST_REASONS:
-                self.send_json({"error": f"reason must be one of: {', '.join(LOST_REASONS)}"}, 400)
-                return
-            notes = (body.get("notes") or "").strip() or None
-            if reason == "other" and not notes:
-                self.send_json({"error": "notes required when reason is 'other'"}, 400)
-                return
-            mark_lost(lead_id, reason, notes=notes)
-            self.send_json({"ok": True})
-
-        elif action == "delete":
-            delete_lead(lead_id)
-            self.send_json({"ok": True})
-
-        else:
-            self.send_json({"error": f"Unknown action: {action}"}, 404)
-
-    def _handle_pilot_post(self, path, body):
-        """Pilot POST actions — called from do_POST after leads routing."""
-        pm = _PILOT_ID_PATTERN.match(path)
-        if not pm:
-            return False
-        cid, action = int(pm.group(1)), pm.group(2)
-        candidate = _pilot.get_candidate_by_id(cid)
-        if not candidate:
-            self.send_json({"error": f"Candidate {cid} not found"}, 404)
-            return True
-
-        if action == "save-draft":
-            draft = (body.get("draft") or "").strip()
-            if not draft:
-                self.send_json({"error": "draft is required"}, 400)
-                return True
-            _pilot.set_draft(cid, draft)
-            self.send_json({"ok": True})
-
-        elif action == "save-and-approve":
-            draft = (body.get("draft") or "").strip()
-            if not draft:
-                self.send_json({"error": "draft is required"}, 400)
-                return True
-            _pilot.set_draft(cid, draft)
-            _pilot.set_status(cid, "approved")
-            self.send_json({"ok": True})
-
-        elif action == "approve":
-            if not candidate["outreach_draft"]:
-                self.send_json({"error": "No draft to approve. Save a draft first."}, 400)
-                return True
-            _pilot.set_status(cid, "approved")
-            self.send_json({"ok": True})
-
-        elif action == "mark-sent":
-            _pilot.set_status(cid, "sent", contacted=True)
-            self.send_json({"ok": True})
-
-        elif action == "log-reply":
-            reply = (body.get("reply") or "").strip()
-            if not reply:
-                self.send_json({"error": "reply text is required"}, 400)
-                return True
-            _pilot.log_reply(cid, reply)
-            # Try AI summary (non-blocking — skip if no key)
-            summary = None
-            try:
-                from leadclaw.drafting import check_api_key, summarize_pilot_reply
-                if check_api_key():
-                    summary = summarize_pilot_reply(dict(candidate), reply)
-                    if summary:
-                        _pilot.set_reply_summary(cid, summary)
-            except Exception:
-                pass
-            self.send_json({"ok": True, "summary": summary})
-
-        elif action == "convert":
-            _pilot.set_status(cid, "converted")
-            self.send_json({"ok": True})
-
-        elif action == "pass":
-            _pilot.set_status(cid, "passed")
-            self.send_json({"ok": True})
-
-        else:
-            self.send_json({"error": f"Unknown pilot action: {action}"}, 404)
-        return True
-
-    def do_OPTIONS(self):
-        # Only allow same-origin preflight
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
+@app.route("/api/pilot/<int:cid>/pass", methods=["POST"])
+@login_required
+@verified_required
+def route_pilot_pass(cid):
+    candidate = _get_pilot_candidate(cid)
+    if not candidate:
+        return jsonify({"error": f"Candidate {cid} not found"}), 404
+    _pilot.set_status(cid, "passed")
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------
@@ -1030,28 +1351,21 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    import argparse
     init_db()
-    parser = argparse.ArgumentParser(
-        prog="leadclaw-web",
-        description="LeadClaw web dashboard",
-    )
-    parser.add_argument("--host", default="127.0.0.1",
-                        help="Bind host (default: 127.0.0.1 — localhost only)")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
-                        help=f"Port (default: {DEFAULT_PORT})")
+    parser = argparse.ArgumentParser(prog="leadclaw-web", description="LeadClaw web dashboard")
+    parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 7432)))
     args = parser.parse_args()
 
     if args.host == "0.0.0.0":
-        print("WARNING: binding to 0.0.0.0 exposes unauthenticated write endpoints.")
-        print("         Only do this on a trusted local network.")
-        print("         For internet exposure, use a reverse proxy with auth.")
+        print("WARNING: binding to 0.0.0.0 — ensure this is behind a reverse proxy in production.")
 
-    server = HTTPServer((args.host, args.port), Handler)
     url = f"http://{'localhost' if args.host == '127.0.0.1' else args.host}:{args.port}"
     print(f"LeadClaw dashboard → {url}")
     print("Ctrl+C to stop.")
     try:
-        server.serve_forever()
+        app.run(host=args.host, port=args.port)
     except KeyboardInterrupt:
         print("\nStopped.")
         sys.exit(0)

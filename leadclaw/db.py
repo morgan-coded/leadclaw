@@ -15,6 +15,8 @@ def get_conn():
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # Enforce FK constraints for every connection
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
     except Exception:
@@ -27,10 +29,24 @@ def get_conn():
 
 
 def init_db():
-    """Initialize schema and indexes."""
+    """Initialize schema, indexes, and run any column-level migrations."""
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     with get_conn() as conn:
+        # Enable FK enforcement during init as well
+        conn.execute("PRAGMA foreign_keys = ON")
+
         conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                email_verified INTEGER NOT NULL DEFAULT 0,
+                verify_token   TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE);
+
             CREATE TABLE IF NOT EXISTS leads (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 name              TEXT NOT NULL,
@@ -83,7 +99,99 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_pilot_phone   ON pilot_candidates(phone);
             CREATE INDEX IF NOT EXISTS idx_pilot_followup ON pilot_candidates(follow_up_after);
         """)
+
+        # --- Column migrations: add user_id to leads ---
+        # SQLite doesn't support IF NOT EXISTS on ALTER TABLE ADD COLUMN
+        try:
+            conn.execute(
+                "ALTER TABLE leads ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1 "
+                "REFERENCES users(id) ON DELETE CASCADE"
+            )
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+        try:
+            conn.execute("CREATE INDEX idx_leads_user_id ON leads(user_id)")
+        except sqlite3.OperationalError as e:
+            if "already exists" not in str(e).lower():
+                raise
+
+        # --- Column migrations: add user_id to pilot_candidates ---
+        try:
+            conn.execute(
+                "ALTER TABLE pilot_candidates ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1 "
+                "REFERENCES users(id) ON DELETE CASCADE"
+            )
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+        try:
+            conn.execute("CREATE INDEX idx_pilot_user_id ON pilot_candidates(user_id)")
+        except sqlite3.OperationalError as e:
+            if "already exists" not in str(e).lower():
+                raise
+
+        # Ensure the default CLI user (id=1) exists so FK DEFAULT 1 is always valid
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO users (id, email, password_hash, email_verified)
+            VALUES (1, 'cli@localhost', 'cli-no-password', 1)
+            """
+        )
+
     print(f"Database initialized at {DB_PATH}")
+
+
+# ---------------------------------------------------------------------------
+# User helpers
+# ---------------------------------------------------------------------------
+
+def get_user_by_email(email: str):
+    """Return the users row for the given email, or None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE email = ? COLLATE NOCASE",
+            (email,),
+        ).fetchone()
+
+
+def get_user_by_id(user_id: int):
+    """Return the users row for the given id, or None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+
+def get_user_by_verify_token(token: str):
+    """Return user row matching a verification token, or None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE verify_token = ?",
+            (token,),
+        ).fetchone()
+
+
+def create_user(email: str, password_hash: str, verify_token: str) -> int:
+    """Insert a new user and return the new id."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO users (email, password_hash, verify_token) VALUES (?, ?, ?)",
+            (email, password_hash, verify_token),
+        )
+        return cur.lastrowid
+
+
+def verify_user_email(user_id: int):
+    """Mark a user's email as verified and clear the token."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?",
+            (user_id,),
+        )
 
 
 if __name__ == "__main__":
