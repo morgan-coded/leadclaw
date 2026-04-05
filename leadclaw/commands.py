@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from typing import Optional
 
+import leadclaw.pilot as _pilot
 from leadclaw.config import (
     DEFAULT_FOLLOWUP_DAYS,
     LOST_REASONS,
@@ -23,7 +24,6 @@ from leadclaw.drafting import (
     summarize_pilot_reply,
     summarize_pipeline,
 )
-import leadclaw.pilot as _pilot
 from leadclaw.queries import (
     add_lead,
     delete_lead,
@@ -675,7 +675,7 @@ def cmd_pilot(args):
 
     elif subcmd == "list":
         candidates = _pilot.get_all_candidates(status=args.status, limit=args.limit)
-        label = f"Pilot Candidates — {args.status or 'all'}" 
+        label = f"Pilot Candidates — {args.status or 'all'}"
         print(f"=== {label} ({len(candidates)}) ===\n")
         if not candidates:
             print("None found.")

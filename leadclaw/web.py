@@ -32,6 +32,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 
+import leadclaw.pilot as _pilot
 from leadclaw.config import (
     DEFAULT_FOLLOWUP_DAYS,
     LOST_REASONS,
@@ -53,7 +54,6 @@ from leadclaw.queries import (
     update_lead,
     update_quote,
 )
-import leadclaw.pilot as _pilot
 
 DEFAULT_PORT = 7432
 

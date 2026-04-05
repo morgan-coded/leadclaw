@@ -76,14 +76,14 @@ def test_api_summary_with_leads():
     queries.update_quote(id2, 1500.0)
     data = api_summary()
     assert data["pipeline"]["open_value"] > 0
-    names = [l["name"] for l in data["active"]]
+    names = [lead["name"] for lead in data["active"]]
     assert "Web Test" in names and "Quoted Lead" in names
 
 
 def test_api_summary_lead_fields():
     queries.add_lead("Field Check", "fencing", phone="555-9999", email="a@b.com", notes="test")
     data = api_summary()
-    lead = next(l for l in data["active"] if l["name"] == "Field Check")
+    lead = next(row for row in data["active"] if row["name"] == "Field Check")
     assert lead["phone"] == "555-9999"
     assert lead["email"] == "a@b.com"
     assert lead["notes"] == "test"
@@ -102,7 +102,7 @@ def test_api_closed_contains_won_and_lost():
     queries.mark_won(id1)
     queries.mark_lost(id2, "price")
     data = api_closed()
-    names = [l["name"] for l in data["closed"]]
+    names = [lead["name"] for lead in data["closed"]]
     assert "Won Lead" in names
     assert "Lost Lead" in names
     assert "Active Lead" not in names
@@ -112,7 +112,7 @@ def test_api_closed_includes_lost_reason():
     id1, _ = queries.add_lead("Lost With Reason", "painting")
     queries.mark_lost(id1, "price")
     data = api_closed()
-    lead = next(l for l in data["closed"] if l["name"] == "Lost With Reason")
+    lead = next(row for row in data["closed"] if row["name"] == "Lost With Reason")
     assert lead["lost_reason"] == "price"
 
 

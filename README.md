@@ -4,6 +4,8 @@
 
 LeadClaw is a lightweight lead tracking CLI for local service businesses. It tells you who to call today, drafts your follow-up texts, and keeps your pipeline visible — without a CRM subscription.
 
+> A [Morgan Labs](https://morganlabs.org) project.
+
 ---
 
 ## Quickstart
@@ -109,3 +111,4 @@ See [PILOT.md](PILOT.md) for the pilot user onboarding guide.
 - [x] Web dashboard — `leadclaw-web` full CRUD UI (add, edit, quote, won, lost, delete in browser)
 - [x] Pilot candidate tracker — scoring, dedup, outreach drafts, reply logging, follow-up reminders
 - [ ] Week 5+ — SMS integration, pilot tracker web UI
+- [ ] Email integration via Google Workspace (morganlabs.org)

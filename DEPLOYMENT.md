@@ -118,7 +118,7 @@ directly to the internet.
 ```nginx
 server {
     listen 443 ssl;
-    server_name leads.yourdomain.com;
+    server_name leads.morganlabs.org;
 
     auth_basic "LeadClaw";
     auth_basic_user_file /etc/nginx/.htpasswd;
@@ -131,7 +131,7 @@ server {
 
 *Caddy example:*
 ```
-leads.yourdomain.com {
+leads.morganlabs.org {
     basicauth {
         youruser JDJhJDE0...  # bcrypt hash from `caddy hash-password`
     }
