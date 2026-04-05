@@ -480,8 +480,9 @@ def api_pilot_candidates(user_id: int, status: str = None) -> dict:
 # ---------------------------------------------------------------------------
 
 def _build_dashboard_html(user_email: str) -> str:
-    """Return the full dashboard HTML with user email and signout link injected."""
-    return """<!DOCTYPE html>
+    '''Return the full dashboard HTML with user email and signout link injected.'''
+    _html = (
+        '''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -556,7 +557,9 @@ def _build_dashboard_html(user_email: str) -> str:
   <h1>🦞 LeadClaw</h1>
   <span id="updated">Loading…</span>
   <div class="header-user">
-    <span>""" + user_email + """</span>
+    <span>'''
+        + user_email
+        + '''</span>
     <a href="/logout">Sign out</a>
   </div>
   <button class="btn" onclick="load()">Refresh</button>
@@ -711,15 +714,10 @@ def _build_dashboard_html(user_email: str) -> str:
 <div class="toast" id="toast"></div>
 
 <script>
-const LOST_REASONS="""
-    + _LOST_REASONS_JS
-    + """;
-const MAX_NAME="""
-    + str(_MAX_NAME_JS)
-    + """;
-const MAX_FIELD="""
-    + str(_MAX_FIELD_JS)
-    + r""";
+const LOST_REASONS=__LOST_REASONS_JS__;
+const MAX_NAME=__MAX_NAME_JS__;
+const MAX_FIELD=__MAX_FIELD_JS__'''
+        + ''';
 
 (function(){
   const sel=document.getElementById('lost-reason');
@@ -1057,11 +1055,15 @@ async function pilotAction(id,action){
 load();
 </script>
 </body>
-</html>"""
-)
+</html>'''
+    )
+    return (
+        _html
+        .replace('__LOST_REASONS_JS__', _LOST_REASONS_JS)
+        .replace('__MAX_NAME_JS__', str(_MAX_NAME_JS))
+        .replace('__MAX_FIELD_JS__', str(_MAX_FIELD_JS))
+    )
 
-
-# Store this for test assertions
 DASHBOARD_HTML = _build_dashboard_html("user@example.com")
 
 # ---------------------------------------------------------------------------
