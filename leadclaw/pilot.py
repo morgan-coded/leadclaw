@@ -1,6 +1,7 @@
 """
 pilot.py - Pilot candidate tracker: queries, scoring, deduplication
 """
+
 from datetime import datetime
 from typing import Optional
 
@@ -11,15 +12,24 @@ STATUSES = ("new", "drafted", "approved", "sent", "replied", "converted", "passe
 
 # Score weights (0-100 scale)
 _SERVICE_TYPE_SCORES = {
-    "lawn care": 90, "landscaping": 90,
-    "pressure washing": 85, "window cleaning": 85,
-    "gutter cleaning": 85, "gutter": 85,
-    "painting": 80, "roofing": 75,
-    "hvac": 75, "plumbing": 75,
-    "fencing": 70, "concrete": 70,
-    "tree trimming": 70, "tree service": 70,
-    "cleaning": 65, "handyman": 65,
-    "electrical": 65, "flooring": 60,
+    "lawn care": 90,
+    "landscaping": 90,
+    "pressure washing": 85,
+    "window cleaning": 85,
+    "gutter cleaning": 85,
+    "gutter": 85,
+    "painting": 80,
+    "roofing": 75,
+    "hvac": 75,
+    "plumbing": 75,
+    "fencing": 70,
+    "concrete": 70,
+    "tree trimming": 70,
+    "tree service": 70,
+    "cleaning": 65,
+    "handyman": 65,
+    "electrical": 65,
+    "flooring": 60,
 }
 
 DEFAULT_FOLLOWUP_DAYS = 4
@@ -29,10 +39,12 @@ def _row_to_dict(row) -> dict:
     return dict(row)
 
 
-def score_candidate(service_type: Optional[str] = None,
-                    has_phone: bool = False,
-                    has_email: bool = False,
-                    source: str = "manual_entry") -> int:
+def score_candidate(
+    service_type: Optional[str] = None,
+    has_phone: bool = False,
+    has_email: bool = False,
+    source: str = "manual_entry",
+) -> int:
     """
     Score 0-100 based on fit signals.
     Higher = better pilot candidate.
@@ -165,17 +177,38 @@ def add_candidate(
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new',
                  datetime('now', ? || ' days'), datetime('now'), datetime('now'))
             """,
-            (name, business_name, phone, email, service_type, location,
-             source, s, notes, f"+{followup_days}"),
+            (
+                name,
+                business_name,
+                phone,
+                email,
+                service_type,
+                location,
+                source,
+                s,
+                notes,
+                f"+{followup_days}",
+            ),
         )
         cid = cur.lastrowid
     return cid, dupes
 
 
 def update_candidate(cid: int, **fields):
-    allowed = {"name", "business_name", "phone", "email", "service_type",
-               "location", "notes", "follow_up_after", "outreach_draft",
-               "reply_text", "reply_summary", "status"}
+    allowed = {
+        "name",
+        "business_name",
+        "phone",
+        "email",
+        "service_type",
+        "location",
+        "notes",
+        "follow_up_after",
+        "outreach_draft",
+        "reply_text",
+        "reply_summary",
+        "status",
+    }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -252,7 +285,8 @@ def import_candidates_from_rows(rows: list) -> dict:
                 service_type=(row.get("service_type") or row.get("service") or "").strip() or None,
                 phone=(row.get("phone") or "").strip() or None,
                 email=(row.get("email") or "").strip() or None,
-                business_name=(row.get("business_name") or row.get("business") or "").strip() or None,
+                business_name=(row.get("business_name") or row.get("business") or "").strip()
+                or None,
                 location=(row.get("location") or row.get("city") or "").strip() or None,
                 notes=(row.get("notes") or "").strip() or None,
                 source="manual_csv",

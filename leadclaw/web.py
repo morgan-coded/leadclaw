@@ -91,7 +91,9 @@ def _lead_to_dict(row) -> dict:
         "follow_up_after": str(row["follow_up_after"])[:10] if row["follow_up_after"] else None,
         "notes": row["notes"],
         "lost_reason": row["lost_reason"],
-        "lost_reason_notes": row["lost_reason_notes"] if "lost_reason_notes" in row.keys() else None,
+        "lost_reason_notes": row["lost_reason_notes"]
+        if "lost_reason_notes" in row.keys()
+        else None,
     }
 
 
@@ -100,8 +102,9 @@ def api_summary() -> dict:
     today = [_lead_to_dict(r) for r in get_today_leads()]
     stale = [_lead_to_dict(r) for r in get_stale_leads()]
     active = [_lead_to_dict(r) for r in get_all_active_leads()]
-    by_status = {row["status"]: {"count": row["count"], "total": row["total_quoted"]}
-                 for row in summary_rows}
+    by_status = {
+        row["status"]: {"count": row["count"], "total": row["total_quoted"]} for row in summary_rows
+    }
     return {
         "pipeline": {
             "open_value": totals["open_value"],
@@ -118,8 +121,7 @@ def api_summary() -> dict:
 def api_closed() -> dict:
     """All won/lost leads for the closed-leads browser view."""
     all_leads = get_all_leads(limit=10000)
-    closed = [_lead_to_dict(r) for r in all_leads
-              if r["status"] in ("won", "lost")]
+    closed = [_lead_to_dict(r) for r in all_leads if r["status"] in ("won", "lost")]
     return {"closed": closed}
 
 
@@ -164,7 +166,8 @@ _LOST_REASONS_JS = json.dumps(LOST_REASONS)
 _MAX_NAME_JS = MAX_NAME_LENGTH
 _MAX_FIELD_JS = MAX_FIELD_LENGTH
 
-DASHBOARD_HTML = """<!DOCTYPE html>
+DASHBOARD_HTML = (
+    """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -389,9 +392,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="toast" id="toast"></div>
 
 <script>
-const LOST_REASONS=""" + _LOST_REASONS_JS + """;
-const MAX_NAME=""" + str(_MAX_NAME_JS) + """;
-const MAX_FIELD=""" + str(_MAX_FIELD_JS) + r""";
+const LOST_REASONS="""
+    + _LOST_REASONS_JS
+    + """;
+const MAX_NAME="""
+    + str(_MAX_NAME_JS)
+    + """;
+const MAX_FIELD="""
+    + str(_MAX_FIELD_JS)
+    + r""";
 
 // Populate lost reason select
 (function(){
@@ -746,6 +755,7 @@ load();
 </script>
 </body>
 </html>"""
+)
 
 # ---------------------------------------------------------------------------
 # HTTP handler
@@ -810,6 +820,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(e)}, 500)
         elif path == "/api/pilot" or path.startswith("/api/pilot?"):
             from urllib.parse import parse_qs
+
             qs = parse_qs(urlparse(self.path).query)
             status = (qs.get("status") or [None])[0]
             try:
@@ -867,8 +878,9 @@ class Handler(BaseHTTPRequestHandler):
                     followup_days = DEFAULT_FOLLOWUP_DAYS
             except (ValueError, TypeError):
                 followup_days = DEFAULT_FOLLOWUP_DAYS
-            lead_id, dupes = add_lead(name, service, phone=phone, email=email,
-                                      notes=notes, followup_days=followup_days)
+            lead_id, dupes = add_lead(
+                name, service, phone=phone, email=email, notes=notes, followup_days=followup_days
+            )
             resp = {"id": lead_id}
             if dupes:
                 resp["duplicates"] = [{"id": d["id"], "name": d["name"]} for d in dupes]
@@ -996,6 +1008,7 @@ class Handler(BaseHTTPRequestHandler):
             summary = None
             try:
                 from leadclaw.drafting import check_api_key, summarize_pilot_reply
+
                 if check_api_key():
                     summary = summarize_pilot_reply(dict(candidate), reply)
                     if summary:
@@ -1035,10 +1048,12 @@ def main():
         prog="leadclaw-web",
         description="LeadClaw web dashboard",
     )
-    parser.add_argument("--host", default="127.0.0.1",
-                        help="Bind host (default: 127.0.0.1 — localhost only)")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
-                        help=f"Port (default: {DEFAULT_PORT})")
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1 — localhost only)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT})"
+    )
     args = parser.parse_args()
 
     if args.host == "0.0.0.0":

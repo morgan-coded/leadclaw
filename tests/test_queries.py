@@ -1,6 +1,7 @@
 """
 tests/test_queries.py - Core query and DB logic tests
 """
+
 import os
 import sqlite3
 
