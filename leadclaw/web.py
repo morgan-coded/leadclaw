@@ -150,9 +150,38 @@ def _valid_date(val: str) -> bool:
 
 
 def _send_verification_email(to_email: str, token: str):
-    """Send verification email via SMTP or print to stdout for local dev."""
+    """Send verification email via Resend API, SMTP, or print link in dev."""
     app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
     link = f"{app_url}/verify/{token}"
+
+    resend_key = os.environ.get("RESEND_API_KEY")
+    if resend_key:
+        import urllib.error
+        import urllib.request
+
+        payload = _json.dumps(
+            {
+                "from": "LeadClaw <noreply@morganlabs.org>",
+                "to": [to_email],
+                "subject": "Verify your LeadClaw account",
+                "text": (
+                    f"Click the link below to verify your LeadClaw account:\n\n{link}\n\n"
+                    "If you didn't create this account, you can ignore this email."
+                ),
+            }
+        ).encode()
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            return
+        except Exception as exc:
+            print(f"WARNING: Resend failed: {exc}", file=sys.stderr)
+            print(f"[FALLBACK] Verification link for {to_email}: {link}", file=sys.stderr)
+            return
 
     smtp_host = os.environ.get("SMTP_HOST")
     if not smtp_host:
@@ -180,7 +209,6 @@ def _send_verification_email(to_email: str, token: str):
             server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, [to_email], msg.as_string())
     except Exception as exc:
-        # Don't crash signup if email fails — log link so admin can verify manually
         print(f"WARNING: Failed to send verification email: {exc}", file=sys.stderr)
         print(f"[FALLBACK] Verification link for {to_email}: {link}", file=sys.stderr)
 
