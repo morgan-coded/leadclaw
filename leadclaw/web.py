@@ -154,7 +154,7 @@ def _send_verification_email(to_email: str, token: str):
     app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
     link = f"{app_url}/verify/{token}"
 
-    resend_key = os.environ.get("RESEND_API_KEY")
+    resend_key = (os.environ.get("RESEND_API_KEY") or "").strip()
     if resend_key:
         import urllib.error
         import urllib.request
@@ -173,10 +173,17 @@ def _send_verification_email(to_email: str, token: str):
         req = urllib.request.Request(
             "https://api.resend.com/emails",
             data=payload,
+            method="POST",
             headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
         )
         try:
             urllib.request.urlopen(req, timeout=10)
+            print(f"[RESEND] Verification email sent to {to_email}", file=sys.stderr)
+            return
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")
+            print(f"WARNING: Resend failed {exc.code}: {body}", file=sys.stderr)
+            print(f"[FALLBACK] Verification link for {to_email}: {link}", file=sys.stderr)
             return
         except Exception as exc:
             print(f"WARNING: Resend failed: {exc}", file=sys.stderr)
