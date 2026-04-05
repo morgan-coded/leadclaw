@@ -63,7 +63,6 @@ def auth_client(client):
 # ---------------------------------------------------------------------------
 
 
-
 def test_api_summary_empty_db():
     data = api_summary(user_id=1)
     assert "pipeline" in data and "today" in data and "stale" in data and "active" in data
@@ -81,8 +80,9 @@ def test_api_summary_with_leads():
 
 
 def test_api_summary_lead_fields():
-    queries.add_lead("Field Check", "fencing", phone="555-9999", email="a@b.com",
-                     notes="test", user_id=1)
+    queries.add_lead(
+        "Field Check", "fencing", phone="555-9999", email="a@b.com", notes="test", user_id=1
+    )
     data = api_summary(user_id=1)
     lead = next(row for row in data["active"] if row["name"] == "Field Check")
     assert lead["phone"] == "555-9999"
@@ -188,15 +188,19 @@ def test_post_add_lead_empty_body(auth_client):
 
 
 def test_post_add_lead_name_too_long(auth_client):
-    status, body = _post(auth_client, "/api/leads",
-                         {"name": "A" * (MAX_NAME_LENGTH + 1), "service": "roofing"})
+    status, body = _post(
+        auth_client, "/api/leads", {"name": "A" * (MAX_NAME_LENGTH + 1), "service": "roofing"}
+    )
     assert status == 400
     assert "name" in body.get("error", "")
 
 
 def test_post_add_lead_invalid_email(auth_client):
-    status, body = _post(auth_client, "/api/leads",
-                         {"name": "Bad Email", "service": "painting", "email": "notanemail"})
+    status, body = _post(
+        auth_client,
+        "/api/leads",
+        {"name": "Bad Email", "service": "painting", "email": "notanemail"},
+    )
     assert status == 400
     assert "email" in body.get("error", "")
 
@@ -210,8 +214,9 @@ def test_post_add_lead_duplicate_warning(auth_client):
 
 
 def test_post_add_lead_no_duplicate_warning_for_unique(auth_client):
-    status, body = _post(auth_client, "/api/leads",
-                         {"name": "Unique XYZ 999", "service": "gutters"})
+    status, body = _post(
+        auth_client, "/api/leads", {"name": "Unique XYZ 999", "service": "gutters"}
+    )
     assert status == 201
     assert not body.get("duplicates")
 
@@ -223,8 +228,9 @@ def test_post_add_lead_no_duplicate_warning_for_unique(auth_client):
 
 def test_post_edit_lead(auth_client):
     lead_id, _ = queries.add_lead("Edit Me", "painting", user_id=auth_client._test_user_id)
-    status, body = _post(auth_client, f"/api/leads/{lead_id}/edit",
-                         {"phone": "555-7777", "notes": "updated"})
+    status, body = _post(
+        auth_client, f"/api/leads/{lead_id}/edit", {"phone": "555-7777", "notes": "updated"}
+    )
     assert status == 200 and body.get("ok")
     lead = queries.get_lead_by_id(lead_id)
     assert lead["phone"] == "555-7777" and lead["notes"] == "updated"
@@ -239,23 +245,26 @@ def test_post_edit_lead_invalid_email(auth_client):
 
 def test_post_edit_lead_invalid_date(auth_client):
     lead_id, _ = queries.add_lead("Edit Date Bad", "fencing", user_id=auth_client._test_user_id)
-    status, body = _post(auth_client, f"/api/leads/{lead_id}/edit",
-                         {"follow_up_after": "not-a-date"})
+    status, body = _post(
+        auth_client, f"/api/leads/{lead_id}/edit", {"follow_up_after": "not-a-date"}
+    )
     assert status == 400
     assert "follow_up_after" in body.get("error", "")
 
 
 def test_post_edit_lead_valid_date(auth_client):
     lead_id, _ = queries.add_lead("Edit Date OK", "painting", user_id=auth_client._test_user_id)
-    status, body = _post(auth_client, f"/api/leads/{lead_id}/edit",
-                         {"follow_up_after": "2026-12-31"})
+    status, body = _post(
+        auth_client, f"/api/leads/{lead_id}/edit", {"follow_up_after": "2026-12-31"}
+    )
     assert status == 200 and body.get("ok")
 
 
 def test_post_edit_name_too_long(auth_client):
     lead_id, _ = queries.add_lead("Edit Name", "roofing", user_id=auth_client._test_user_id)
-    status, body = _post(auth_client, f"/api/leads/{lead_id}/edit",
-                         {"name": "X" * (MAX_NAME_LENGTH + 1)})
+    status, body = _post(
+        auth_client, f"/api/leads/{lead_id}/edit", {"name": "X" * (MAX_NAME_LENGTH + 1)}
+    )
     assert status == 400
     assert "name" in body.get("error", "")
 
@@ -323,8 +332,9 @@ def test_post_lost_other_requires_notes(auth_client):
 
 def test_post_lost_other_with_notes(auth_client):
     lead_id, _ = queries.add_lead("Other OK", "painting", user_id=auth_client._test_user_id)
-    status, body = _post(auth_client, f"/api/leads/{lead_id}/lost",
-                         {"reason": "other", "notes": "some reason"})
+    status, body = _post(
+        auth_client, f"/api/leads/{lead_id}/lost", {"reason": "other", "notes": "some reason"}
+    )
     assert status == 200
 
 
@@ -463,8 +473,13 @@ def test_http_get_pilot_empty(auth_client):
 
 def test_http_get_pilot_with_candidates(auth_client):
     from leadclaw import pilot as p
-    p.add_candidate("Pilot Web Test", service_type="lawn care", phone="555-8888",
-                    user_id=auth_client._test_user_id)
+
+    p.add_candidate(
+        "Pilot Web Test",
+        service_type="lawn care",
+        phone="555-8888",
+        user_id=auth_client._test_user_id,
+    )
     r = auth_client.get("/api/pilot")
     assert r.status_code == 200
     data = json.loads(r.data)
@@ -474,8 +489,10 @@ def test_http_get_pilot_with_candidates(auth_client):
 
 def test_http_get_pilot_filter_by_status(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Filter Test", service_type="roofing",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate(
+        "Filter Test", service_type="roofing", user_id=auth_client._test_user_id
+    )
     p.set_status(cid, "sent", contacted=True)
     p.add_candidate("New One", service_type="painting", user_id=auth_client._test_user_id)
     r = auth_client.get("/api/pilot?status=sent")
@@ -486,10 +503,15 @@ def test_http_get_pilot_filter_by_status(auth_client):
 
 def test_http_pilot_save_draft(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Draft Save", service_type="fencing",
-                              user_id=auth_client._test_user_id)
-    status, body = _post(auth_client, f"/api/pilot/{cid}/save-draft",
-                         {"draft": "Hey, quick question about your fencing work."})
+
+    cid, _ = p.add_candidate(
+        "Draft Save", service_type="fencing", user_id=auth_client._test_user_id
+    )
+    status, body = _post(
+        auth_client,
+        f"/api/pilot/{cid}/save-draft",
+        {"draft": "Hey, quick question about your fencing work."},
+    )
     assert status == 200
     c = p.get_candidate_by_id(cid)
     assert c["outreach_draft"] == "Hey, quick question about your fencing work."
@@ -498,18 +520,25 @@ def test_http_pilot_save_draft(auth_client):
 
 def test_http_pilot_save_draft_empty(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Empty Draft", service_type="roofing",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate(
+        "Empty Draft", service_type="roofing", user_id=auth_client._test_user_id
+    )
     status, body = _post(auth_client, f"/api/pilot/{cid}/save-draft", {"draft": ""})
     assert status == 400
 
 
 def test_http_pilot_save_and_approve(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Approve Test", service_type="lawn care",
-                              user_id=auth_client._test_user_id)
-    status, body = _post(auth_client, f"/api/pilot/{cid}/save-and-approve",
-                         {"draft": "Hi, I saw your lawn care work on Nextdoor."})
+
+    cid, _ = p.add_candidate(
+        "Approve Test", service_type="lawn care", user_id=auth_client._test_user_id
+    )
+    status, body = _post(
+        auth_client,
+        f"/api/pilot/{cid}/save-and-approve",
+        {"draft": "Hi, I saw your lawn care work on Nextdoor."},
+    )
     assert status == 200
     c = p.get_candidate_by_id(cid)
     assert c["status"] == "approved"
@@ -518,8 +547,8 @@ def test_http_pilot_save_and_approve(auth_client):
 
 def test_http_pilot_approve_without_draft(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("No Draft", service_type="roofing",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate("No Draft", service_type="roofing", user_id=auth_client._test_user_id)
     status, body = _post(auth_client, f"/api/pilot/{cid}/approve", {})
     assert status == 400
     assert "draft" in body.get("error", "").lower()
@@ -527,8 +556,10 @@ def test_http_pilot_approve_without_draft(auth_client):
 
 def test_http_pilot_approve_with_draft(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Has Draft", service_type="painting",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate(
+        "Has Draft", service_type="painting", user_id=auth_client._test_user_id
+    )
     p.set_draft(cid, "My draft message.")
     status, body = _post(auth_client, f"/api/pilot/{cid}/approve", {})
     assert status == 200
@@ -537,8 +568,8 @@ def test_http_pilot_approve_with_draft(auth_client):
 
 def test_http_pilot_mark_sent(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Send Test", service_type="gutters",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate("Send Test", service_type="gutters", user_id=auth_client._test_user_id)
     p.set_draft(cid, "draft")
     p.set_status(cid, "approved")
     status, body = _post(auth_client, f"/api/pilot/{cid}/mark-sent", {})
@@ -550,11 +581,14 @@ def test_http_pilot_mark_sent(auth_client):
 
 def test_http_pilot_log_reply(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Reply Test", service_type="roofing",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate(
+        "Reply Test", service_type="roofing", user_id=auth_client._test_user_id
+    )
     p.set_status(cid, "sent", contacted=True)
-    status, body = _post(auth_client, f"/api/pilot/{cid}/log-reply",
-                         {"reply": "Sure, I'd be interested."})
+    status, body = _post(
+        auth_client, f"/api/pilot/{cid}/log-reply", {"reply": "Sure, I'd be interested."}
+    )
     assert status == 200
     c = p.get_candidate_by_id(cid)
     assert c["reply_text"] == "Sure, I'd be interested."
@@ -563,16 +597,20 @@ def test_http_pilot_log_reply(auth_client):
 
 def test_http_pilot_log_reply_empty(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Empty Reply", service_type="fencing",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate(
+        "Empty Reply", service_type="fencing", user_id=auth_client._test_user_id
+    )
     status, body = _post(auth_client, f"/api/pilot/{cid}/log-reply", {"reply": ""})
     assert status == 400
 
 
 def test_http_pilot_convert(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Convert Test", service_type="lawn care",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate(
+        "Convert Test", service_type="lawn care", user_id=auth_client._test_user_id
+    )
     p.set_status(cid, "replied")
     status, body = _post(auth_client, f"/api/pilot/{cid}/convert", {})
     assert status == 200
@@ -581,8 +619,10 @@ def test_http_pilot_convert(auth_client):
 
 def test_http_pilot_pass(auth_client):
     from leadclaw import pilot as p
-    cid, _ = p.add_candidate("Pass Test", service_type="painting",
-                              user_id=auth_client._test_user_id)
+
+    cid, _ = p.add_candidate(
+        "Pass Test", service_type="painting", user_id=auth_client._test_user_id
+    )
     status, body = _post(auth_client, f"/api/pilot/{cid}/pass", {})
     assert status == 200
     assert p.get_candidate_by_id(cid)["status"] == "passed"
@@ -599,11 +639,15 @@ def test_http_pilot_not_found(auth_client):
 
 
 def test_signup_creates_user(client):
-    r = client.post("/signup", data={
-        "email": "new@example.com",
-        "password": "securepass123",
-        "confirm": "securepass123",
-    }, follow_redirects=False)
+    r = client.post(
+        "/signup",
+        data={
+            "email": "new@example.com",
+            "password": "securepass123",
+            "confirm": "securepass123",
+        },
+        follow_redirects=False,
+    )
     # Should show "check your email" page (200) or redirect
     assert r.status_code in (200, 302)
     row = db.get_user_by_email("new@example.com")
@@ -612,20 +656,26 @@ def test_signup_creates_user(client):
 
 
 def test_signup_password_mismatch(client):
-    r = client.post("/signup", data={
-        "email": "bad@example.com",
-        "password": "pass1234",
-        "confirm": "different",
-    })
+    r = client.post(
+        "/signup",
+        data={
+            "email": "bad@example.com",
+            "password": "pass1234",
+            "confirm": "different",
+        },
+    )
     assert b"Passwords do not match" in r.data
 
 
 def test_signup_short_password(client):
-    r = client.post("/signup", data={
-        "email": "short@example.com",
-        "password": "abc",
-        "confirm": "abc",
-    })
+    r = client.post(
+        "/signup",
+        data={
+            "email": "short@example.com",
+            "password": "abc",
+            "confirm": "abc",
+        },
+    )
     assert b"8 characters" in r.data
 
 
@@ -633,13 +683,17 @@ def test_signup_duplicate_email(client):
     import bcrypt
 
     from leadclaw.db import create_user
+
     pw = bcrypt.hashpw(b"pass1234", bcrypt.gensalt()).decode()
     create_user("dup@example.com", pw, "tok")
-    r = client.post("/signup", data={
-        "email": "dup@example.com",
-        "password": "pass1234xx",
-        "confirm": "pass1234xx",
-    })
+    r = client.post(
+        "/signup",
+        data={
+            "email": "dup@example.com",
+            "password": "pass1234xx",
+            "confirm": "pass1234xx",
+        },
+    )
     assert b"already exists" in r.data
 
 
@@ -647,6 +701,7 @@ def test_verify_token_logs_in(client):
     import bcrypt
 
     from leadclaw.db import create_user
+
     pw = bcrypt.hashpw(b"pass1234", bcrypt.gensalt()).decode()
     uid = create_user("verify@example.com", pw, "my-secret-token")
     r = client.get("/verify/my-secret-token", follow_redirects=False)
@@ -666,6 +721,7 @@ def test_login_unverified_user_can_login_but_dashboard_blocked(client):
     import bcrypt
 
     from leadclaw.db import create_user
+
     pw = bcrypt.hashpw(b"pass1234", bcrypt.gensalt()).decode()
     create_user("unverified@example.com", pw, "some-token")
     client.post("/login", data={"email": "unverified@example.com", "password": "pass1234"})
@@ -678,6 +734,7 @@ def test_login_wrong_password(client):
     import bcrypt
 
     from leadclaw.db import create_user, verify_user_email
+
     pw = bcrypt.hashpw(b"correct", bcrypt.gensalt()).decode()
     uid = create_user("wrongpw@example.com", pw, "tok")
     verify_user_email(uid)

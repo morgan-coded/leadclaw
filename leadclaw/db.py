@@ -149,6 +149,7 @@ def init_db():
 # User helpers
 # ---------------------------------------------------------------------------
 
+
 def get_user_by_email(email: str):
     """Return the users row for the given email, or None."""
     with get_conn() as conn:

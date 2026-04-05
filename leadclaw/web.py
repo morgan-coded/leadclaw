@@ -216,9 +216,7 @@ input:focus{border-color:var(--accent);}
 LOGIN_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>LeadClaw — Sign In</title>"
-    + _AUTH_CSS
-    + "</head><body><div class='card'>"
+    "<title>LeadClaw — Sign In</title>" + _AUTH_CSS + "</head><body><div class='card'>"
     "<h1>🦞 LeadClaw</h1>"
     "<div class='sub'>Sign in to your account</div>"
     "{% if error %}<div class='err'>{{ error }}</div>{% endif %}"
@@ -237,9 +235,7 @@ LOGIN_HTML = (
 SIGNUP_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>LeadClaw — Create Account</title>"
-    + _AUTH_CSS
-    + "</head><body><div class='card'>"
+    "<title>LeadClaw — Create Account</title>" + _AUTH_CSS + "</head><body><div class='card'>"
     "<h1>🦞 LeadClaw</h1>"
     "<div class='sub'>Create your account</div>"
     "{% if error %}<div class='err'>{{ error }}</div>{% endif %}"
@@ -259,9 +255,7 @@ SIGNUP_HTML = (
 CHECK_EMAIL_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>LeadClaw — Verify Email</title>"
-    + _AUTH_CSS
-    + "</head><body><div class='card'>"
+    "<title>LeadClaw — Verify Email</title>" + _AUTH_CSS + "</head><body><div class='card'>"
     "<h1>🦞 LeadClaw</h1>"
     "<div class='info' style='margin-top:16px'>"
     "📧 We sent a verification link to <strong>{{ email }}</strong>.<br><br>"
@@ -275,9 +269,7 @@ CHECK_EMAIL_HTML = (
 UNVERIFIED_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>LeadClaw — Verify Email</title>"
-    + _AUTH_CSS
-    + "</head><body><div class='card'>"
+    "<title>LeadClaw — Verify Email</title>" + _AUTH_CSS + "</head><body><div class='card'>"
     "<h1>🦞 LeadClaw</h1>"
     "<div class='info' style='margin-top:16px'>"
     "📧 Please verify your email before accessing the dashboard.<br><br>"
@@ -305,13 +297,19 @@ def signup():
     confirm = request.form.get("confirm") or ""
 
     if not email or not _valid_email(email):
-        return render_template_string(SIGNUP_HTML, error="Enter a valid email address.", email=email)
+        return render_template_string(
+            SIGNUP_HTML, error="Enter a valid email address.", email=email
+        )
     if len(password) < 8:
-        return render_template_string(SIGNUP_HTML, error="Password must be at least 8 characters.", email=email)
+        return render_template_string(
+            SIGNUP_HTML, error="Password must be at least 8 characters.", email=email
+        )
     if password != confirm:
         return render_template_string(SIGNUP_HTML, error="Passwords do not match.", email=email)
     if get_user_by_email(email):
-        return render_template_string(SIGNUP_HTML, error="An account with that email already exists.", email=email)
+        return render_template_string(
+            SIGNUP_HTML, error="An account with that email already exists.", email=email
+        )
 
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     token = secrets.token_urlsafe(32)
@@ -438,8 +436,9 @@ def api_summary(user_id: int) -> dict:
     today = [_lead_to_dict(r) for r in get_today_leads(user_id=user_id)]
     stale = [_lead_to_dict(r) for r in get_stale_leads(user_id=user_id)]
     active = [_lead_to_dict(r) for r in get_all_active_leads(user_id=user_id)]
-    by_status = {row["status"]: {"count": row["count"], "total": row["total_quoted"]}
-                 for row in summary_rows}
+    by_status = {
+        row["status"]: {"count": row["count"], "total": row["total_quoted"]} for row in summary_rows
+    }
     return {
         "pipeline": {
             "open_value": totals["open_value"],
@@ -474,10 +473,11 @@ def api_pilot_candidates(user_id: int, status: str = None) -> dict:
 # Dashboard HTML (injected with user email + sign-out link)
 # ---------------------------------------------------------------------------
 
+
 def _build_dashboard_html(user_email: str) -> str:
-    '''Return the full dashboard HTML with user email and signout link injected.'''
+    """Return the full dashboard HTML with user email and signout link injected."""
     _html = (
-        '''<!DOCTYPE html>
+        """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -552,9 +552,9 @@ def _build_dashboard_html(user_email: str) -> str:
   <h1>🦞 LeadClaw</h1>
   <span id="updated">Loading…</span>
   <div class="header-user">
-    <span>'''
+    <span>"""
         + user_email
-        + '''</span>
+        + """</span>
     <a href="/logout">Sign out</a>
   </div>
   <button class="btn" onclick="load()">Refresh</button>
@@ -711,8 +711,8 @@ def _build_dashboard_html(user_email: str) -> str:
 <script>
 const LOST_REASONS=__LOST_REASONS_JS__;
 const MAX_NAME=__MAX_NAME_JS__;
-const MAX_FIELD=__MAX_FIELD_JS__'''
-        + r''';
+const MAX_FIELD=__MAX_FIELD_JS__"""
+        + r""";
 
 (function(){
   const sel=document.getElementById('lost-reason');
@@ -1050,14 +1050,14 @@ async function pilotAction(id,action){
 load();
 </script>
 </body>
-</html>'''
+</html>"""
     )
     return (
-        _html
-        .replace('__LOST_REASONS_JS__', _LOST_REASONS_JS)
-        .replace('__MAX_NAME_JS__', str(_MAX_NAME_JS))
-        .replace('__MAX_FIELD_JS__', str(_MAX_FIELD_JS))
+        _html.replace("__LOST_REASONS_JS__", _LOST_REASONS_JS)
+        .replace("__MAX_NAME_JS__", str(_MAX_NAME_JS))
+        .replace("__MAX_FIELD_JS__", str(_MAX_FIELD_JS))
     )
+
 
 DASHBOARD_HTML = _build_dashboard_html("user@example.com")
 
@@ -1144,9 +1144,15 @@ def route_add_lead():
     except (ValueError, TypeError):
         followup_days = DEFAULT_FOLLOWUP_DAYS
 
-    lead_id, dupes = add_lead(name, service, phone=phone, email=email,
-                               notes=notes, followup_days=followup_days,
-                               user_id=current_user.id)
+    lead_id, dupes = add_lead(
+        name,
+        service,
+        phone=phone,
+        email=email,
+        notes=notes,
+        followup_days=followup_days,
+        user_id=current_user.id,
+    )
     resp = {"id": lead_id}
     if dupes:
         resp["duplicates"] = [{"id": d["id"], "name": d["name"]} for d in dupes]
@@ -1320,6 +1326,7 @@ def route_pilot_log_reply(cid):
     summary = None
     try:
         from leadclaw.drafting import check_api_key, summarize_pilot_reply
+
         if check_api_key():
             summary = summarize_pilot_reply(dict(candidate), reply)
             if summary:
@@ -1358,6 +1365,7 @@ def route_pilot_pass(cid):
 
 def main():
     import argparse
+
     init_db()
     parser = argparse.ArgumentParser(prog="leadclaw-web", description="LeadClaw web dashboard")
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))

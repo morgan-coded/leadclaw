@@ -91,8 +91,9 @@ def find_duplicates(name: str, phone: Optional[str] = None) -> list:
 # ---------------------------------------------------------------------------
 
 
-def get_all_candidates(status: Optional[str] = None, limit: int = 200, offset: int = 0,
-                       user_id: Optional[int] = None) -> list:
+def get_all_candidates(
+    status: Optional[str] = None, limit: int = 200, offset: int = 0, user_id: Optional[int] = None
+) -> list:
     with get_conn() as conn:
         if status and user_id is not None:
             return conn.execute(
@@ -219,8 +220,19 @@ def add_candidate(
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?,
                  datetime('now', ? || ' days'), datetime('now'), datetime('now'))
             """,
-            (name, business_name, phone, email, service_type, location,
-             source, s, notes, user_id, f"+{followup_days}"),
+            (
+                name,
+                business_name,
+                phone,
+                email,
+                service_type,
+                location,
+                source,
+                s,
+                notes,
+                user_id,
+                f"+{followup_days}",
+            ),
         )
         cid = cur.lastrowid
     return cid, dupes
