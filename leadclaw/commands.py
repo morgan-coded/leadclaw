@@ -1,6 +1,7 @@
 """
 commands.py - CLI entry point using argparse
 """
+
 import argparse
 import os
 import sys
@@ -67,7 +68,9 @@ def _status_label(status: str) -> str:
 
 
 def fmt_lead(lead) -> str:
-    prefix = _status_label(lead["status"]).split()[0] if not _PLAIN else _status_label(lead["status"])
+    prefix = (
+        _status_label(lead["status"]).split()[0] if not _PLAIN else _status_label(lead["status"])
+    )
     lines = [f"{prefix} [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'}"]
     lines.append(f"   Status: {lead['status']}")
     if lead["quote_amount"]:
@@ -114,7 +117,9 @@ def resolve_lead(name: str, lead_id: Optional[int] = None):
     if len(all_matches) > 1:
         print(f"Multiple matches for '{name}':")
         for match in all_matches:
-            print(f"   [{match['id']}] {match['name']} — {match['service'] or 'N/A'} ({match['status']})")
+            print(
+                f"   [{match['id']}] {match['name']} — {match['service'] or 'N/A'} ({match['status']})"
+            )
         print(f"   Using most recent: [{lead['id']}] {lead['name']}")
         print("   Tip: use --id <id> to be explicit.\n")
     return lead
@@ -132,7 +137,9 @@ def _validate_date(val: str) -> bool:
         return False
 
 
-def _prompt_str(label: str, current: str = "", required: bool = False, max_len: int = MAX_FIELD_LENGTH) -> Optional[str]:
+def _prompt_str(
+    label: str, current: str = "", required: bool = False, max_len: int = MAX_FIELD_LENGTH
+) -> Optional[str]:
     """Prompt for a string field with optional validation."""
     while True:
         val = input(f"  {label}: ").strip()
@@ -231,8 +238,9 @@ def cmd_add(args):
     notes = _prompt_str("Notes (optional)")
     followup_days = _prompt_int("Follow up in how many days?", DEFAULT_FOLLOWUP_DAYS, min_val=0)
 
-    lead_id, dupes = add_lead(name, service, phone=phone, email=email,
-                               notes=notes, followup_days=followup_days)
+    lead_id, dupes = add_lead(
+        name, service, phone=phone, email=email, notes=notes, followup_days=followup_days
+    )
     if dupes:
         print(f"\nWarning: {len(dupes)} existing lead(s) with same name:")
         for dup in dupes:
@@ -253,7 +261,10 @@ def cmd_edit(args):
         ("phone", f"Phone [{lead['phone'] or ''}]"),
         ("email", f"Email [{lead['email'] or ''}]"),
         ("notes", f"Notes [{lead['notes'] or ''}]"),
-        ("follow_up_after", f"Follow-up date [{str(lead['follow_up_after'] or '')[:10]}] (YYYY-MM-DD)"),
+        (
+            "follow_up_after",
+            f"Follow-up date [{str(lead['follow_up_after'] or '')[:10]}] (YYYY-MM-DD)",
+        ),
     ]:
         val = input(f"  {label}: ").strip()
         if val:
@@ -279,7 +290,11 @@ def cmd_delete(args):
     lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
-    confirm = input(f"Delete [{lead['id']}] {lead['name']}? This cannot be undone. (yes/no): ").strip().lower()
+    confirm = (
+        input(f"Delete [{lead['id']}] {lead['name']}? This cannot be undone. (yes/no): ")
+        .strip()
+        .lower()
+    )
     if confirm != "yes":
         print("Cancelled.")
         return
@@ -295,7 +310,9 @@ def cmd_quote(args):
     if not lead:
         return
     update_quote(lead["id"], args.amount)
-    print(f"[{lead['id']}] {lead['name']} — quote set to ${args.amount:,.0f}, follow-up in {DEFAULT_FOLLOWUP_DAYS} days.")
+    print(
+        f"[{lead['id']}] {lead['name']} — quote set to ${args.amount:,.0f}, follow-up in {DEFAULT_FOLLOWUP_DAYS} days."
+    )
 
 
 def cmd_won(args):
@@ -362,7 +379,9 @@ def cmd_digest(args):
     if stale:
         print(f"\n=== Needs Action ({len(stale)}) ===")
         for lead in stale[:5]:
-            print(f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} (due {str(lead['follow_up_after'])[:10]})")
+            print(
+                f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} (due {str(lead['follow_up_after'])[:10]})"
+            )
         if len(stale) > 5:
             print(f"  ... and {len(stale) - 5} more")
 
@@ -446,9 +465,21 @@ def cmd_export(args):
         return
 
     out = args.output or "leads_export.csv"
-    fields = ["id", "name", "phone", "email", "service", "status",
-              "lost_reason", "lost_reason_notes", "quote_amount",
-              "created_at", "last_contact_at", "follow_up_after", "notes"]
+    fields = [
+        "id",
+        "name",
+        "phone",
+        "email",
+        "service",
+        "status",
+        "lost_reason",
+        "lost_reason_notes",
+        "quote_amount",
+        "created_at",
+        "last_contact_at",
+        "follow_up_after",
+        "notes",
+    ]
 
     with open(out, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
@@ -477,58 +508,84 @@ def build_parser():
 
     p_list = sub.add_parser("list", help="List leads")
     p_list.add_argument("--all", action="store_true", help="Include won/lost leads")
-    p_list.add_argument("--limit", type=int, default=MAX_LIST_ROWS, help=f"Max rows (default {MAX_LIST_ROWS})")
+    p_list.add_argument(
+        "--limit", type=int, default=MAX_LIST_ROWS, help=f"Max rows (default {MAX_LIST_ROWS})"
+    )
     p_list.add_argument("--offset", type=int, default=0, help="Row offset for pagination")
 
-    p_lead = sub.add_parser("lead", help="Look up a lead",
-                             epilog="Examples:\n  leadclaw lead Mike\n  leadclaw lead --id 7",
-                             formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_lead = sub.add_parser(
+        "lead",
+        help="Look up a lead",
+        epilog="Examples:\n  leadclaw lead Mike\n  leadclaw lead --id 7",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_lead.add_argument("name", nargs="?", default="")
     p_lead.add_argument("--id", type=int, help="Look up by lead ID")
 
     sub.add_parser("add", help="Add a new lead (interactive)")
 
-    p_edit = sub.add_parser("edit", help="Edit a lead (interactive)",
-                             epilog="Examples:\n  leadclaw edit Mike\n  leadclaw edit --id 7",
-                             formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_edit = sub.add_parser(
+        "edit",
+        help="Edit a lead (interactive)",
+        epilog="Examples:\n  leadclaw edit Mike\n  leadclaw edit --id 7",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_edit.add_argument("name", nargs="?", default="")
     p_edit.add_argument("--id", type=int)
 
-    p_del = sub.add_parser("delete", help="Delete a lead",
-                            epilog="Examples:\n  leadclaw delete Mike\n  leadclaw delete --id 7",
-                            formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_del = sub.add_parser(
+        "delete",
+        help="Delete a lead",
+        epilog="Examples:\n  leadclaw delete Mike\n  leadclaw delete --id 7",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_del.add_argument("name", nargs="?", default="")
     p_del.add_argument("--id", type=int)
 
-    p_quote = sub.add_parser("quote", help="Set a quote amount",
-                              epilog="Examples:\n  leadclaw quote Mike 850\n  leadclaw quote --id 7 850",
-                              formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_quote = sub.add_parser(
+        "quote",
+        help="Set a quote amount",
+        epilog="Examples:\n  leadclaw quote Mike 850\n  leadclaw quote --id 7 850",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_quote.add_argument("name", nargs="?", default="")
     p_quote.add_argument("amount", type=float, help="Quote amount (must be > 0)")
     p_quote.add_argument("--id", type=int)
 
-    p_won = sub.add_parser("won", help="Mark a lead as won",
-                            epilog="Examples:\n  leadclaw won Mike\n  leadclaw won --id 7",
-                            formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_won = sub.add_parser(
+        "won",
+        help="Mark a lead as won",
+        epilog="Examples:\n  leadclaw won Mike\n  leadclaw won --id 7",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_won.add_argument("name", nargs="?", default="")
     p_won.add_argument("--id", type=int)
 
-    p_lost = sub.add_parser("lost", help="Mark a lead as lost",
-                             epilog=f"Reasons: {', '.join(LOST_REASONS)}\nExamples:\n  leadclaw lost Mike price\n  leadclaw lost --id 7 other",
-                             formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_lost = sub.add_parser(
+        "lost",
+        help="Mark a lead as lost",
+        epilog=f"Reasons: {', '.join(LOST_REASONS)}\nExamples:\n  leadclaw lost Mike price\n  leadclaw lost --id 7 other",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_lost.add_argument("name", nargs="?", default="")
     p_lost.add_argument("reason", choices=LOST_REASONS)
     p_lost.add_argument("--id", type=int)
 
-    p_draft = sub.add_parser("draft-followup", help="Draft a follow-up text via AI",
-                              epilog="Examples:\n  leadclaw draft-followup Mike\n  leadclaw draft-followup --id 7",
-                              formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_draft = sub.add_parser(
+        "draft-followup",
+        help="Draft a follow-up text via AI",
+        epilog="Examples:\n  leadclaw draft-followup Mike\n  leadclaw draft-followup --id 7",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_draft.add_argument("name", nargs="?", default="")
     p_draft.add_argument("--id", type=int)
 
-    p_sum = sub.add_parser("summarize", help="AI summary of a lead",
-                            epilog="Examples:\n  leadclaw summarize Mike\n  leadclaw summarize --id 7",
-                            formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_sum = sub.add_parser(
+        "summarize",
+        help="AI summary of a lead",
+        epilog="Examples:\n  leadclaw summarize Mike\n  leadclaw summarize --id 7",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_sum.add_argument("name", nargs="?", default="")
     p_sum.add_argument("--id", type=int)
 
@@ -536,7 +593,9 @@ def build_parser():
     sub.add_parser("pipeline", help="Full AI pipeline analysis")
 
     p_export = sub.add_parser("export", help="Export all leads to CSV")
-    p_export.add_argument("--output", "-o", default=None, help="Output file (default: leads_export.csv)")
+    p_export.add_argument(
+        "--output", "-o", default=None, help="Output file (default: leads_export.csv)"
+    )
 
     p_import = sub.add_parser(
         "import",
@@ -638,23 +697,25 @@ def _resolve_candidate(name: str, cid: Optional[int] = None):
 
 def _fmt_candidate(c) -> str:
     lines = [f"[{c['status']}] [{c['id']}] {c['name']}"]
-    if c['business_name'] and c['business_name'] != c['name']:
+    if c["business_name"] and c["business_name"] != c["name"]:
         lines.append(f"   Business: {c['business_name']}")
     lines.append(f"   Service:  {c['service_type'] or 'N/A'}")
-    if c['location']:
+    if c["location"]:
         lines.append(f"   Location: {c['location']}")
-    if c['phone']:
+    if c["phone"]:
         lines.append(f"   Phone:    {c['phone']}")
-    if c['email']:
+    if c["email"]:
         lines.append(f"   Email:    {c['email']}")
     lines.append(f"   Score:    {c['score']}/100  Source: {c['source']}")
-    if c['follow_up_after']:
+    if c["follow_up_after"]:
         lines.append(f"   Follow up: {str(c['follow_up_after'])[:10]}")
-    if c['outreach_draft']:
-        lines.append(f"   Draft:    {c['outreach_draft'][:80]}{'...' if len(c['outreach_draft']) > 80 else ''}")
-    if c['reply_summary']:
+    if c["outreach_draft"]:
+        lines.append(
+            f"   Draft:    {c['outreach_draft'][:80]}{'...' if len(c['outreach_draft']) > 80 else ''}"
+        )
+    if c["reply_summary"]:
         lines.append(f"   Reply summary: {c['reply_summary']}")
-    if c['notes']:
+    if c["notes"]:
         lines.append(f"   Notes:    {c['notes']}")
     return "\n".join(lines)
 
@@ -666,7 +727,7 @@ def cmd_pilot(args):
         summary = _pilot.get_pilot_summary()
         print(f"=== Pilot Tracker ({summary['total']} total) ===")
         for s in _pilot.STATUSES:
-            count = summary['by_status'].get(s, 0)
+            count = summary["by_status"].get(s, 0)
             if count:
                 print(f"  {s}: {count}")
         followups = _pilot.get_followup_due()
@@ -685,14 +746,14 @@ def cmd_pilot(args):
             print()
 
     elif subcmd == "show":
-        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        c = _resolve_candidate(getattr(args, "name", ""), getattr(args, "id", None))
         if c:
             print(_fmt_candidate(c))
-            if c['outreach_draft']:
+            if c["outreach_draft"]:
                 print(f"\n--- Draft ---\n{c['outreach_draft']}")
-            if c['reply_text']:
+            if c["reply_text"]:
                 print(f"\n--- Reply ---\n{c['reply_text']}")
-            if c['reply_summary']:
+            if c["reply_summary"]:
                 print(f"\n--- Reply Summary ---\n{c['reply_summary']}")
 
     elif subcmd == "add":
@@ -705,8 +766,13 @@ def cmd_pilot(args):
         location = _prompt_str("Location/city (optional)")
         notes = _prompt_str("Notes (optional)")
         cid, dupes = _pilot.add_candidate(
-            name=name, business_name=business, service_type=service,
-            phone=phone, email=email, location=location, notes=notes,
+            name=name,
+            business_name=business,
+            service_type=service,
+            phone=phone,
+            email=email,
+            location=location,
+            notes=notes,
             source="manual_entry",
         )
         if dupes:
@@ -718,6 +784,7 @@ def cmd_pilot(args):
 
     elif subcmd == "import":
         import csv
+
         path = args.file
         if not os.path.exists(path):
             print(f"File not found: {path}")
@@ -737,7 +804,9 @@ def cmd_pilot(args):
             print("No data rows found.")
             return
         if not args.yes:
-            confirm = input(f"Import {len(rows)} candidate(s) from {path}? (yes/no): ").strip().lower()
+            confirm = (
+                input(f"Import {len(rows)} candidate(s) from {path}? (yes/no): ").strip().lower()
+            )
             if confirm != "yes":
                 print("Cancelled.")
                 return
@@ -750,7 +819,7 @@ def cmd_pilot(args):
         if not check_api_key():
             print("ANTHROPIC_API_KEY not set — add it to .env")
             return
-        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        c = _resolve_candidate(getattr(args, "name", ""), getattr(args, "id", None))
         if not c:
             return
         print(f"Drafting outreach for {c['name']}...\n")
@@ -761,40 +830,42 @@ def cmd_pilot(args):
             print()
             save = input("Save this draft? (yes/no): ").strip().lower()
             if save == "yes":
-                _pilot.set_draft(c['id'], draft)
+                _pilot.set_draft(c["id"], draft)
                 print(f"Draft saved. Status → drafted. Run: leadclaw pilot approve {c['name']}")
 
     elif subcmd == "approve":
-        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        c = _resolve_candidate(getattr(args, "name", ""), getattr(args, "id", None))
         if not c:
             return
-        if not c['outreach_draft']:
+        if not c["outreach_draft"]:
             print(f"No draft for [{c['id']}] {c['name']}. Run: leadclaw pilot draft {c['name']}")
             return
         print(f"--- Draft for {c['name']} ---")
-        print(c['outreach_draft'])
+        print(c["outreach_draft"])
         print()
         confirm = input("Approve for sending? (yes/no): ").strip().lower()
         if confirm == "yes":
-            _pilot.set_status(c['id'], "approved")
-            print(f"[{c['id']}] {c['name']} → approved. Mark sent when you've sent it: leadclaw pilot mark-sent {c['name']}")
+            _pilot.set_status(c["id"], "approved")
+            print(
+                f"[{c['id']}] {c['name']} → approved. Mark sent when you've sent it: leadclaw pilot mark-sent {c['name']}"
+            )
         else:
             print("Not approved. Run pilot draft again to regenerate.")
 
     elif subcmd == "mark-sent":
-        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        c = _resolve_candidate(getattr(args, "name", ""), getattr(args, "id", None))
         if not c:
             return
-        if c['status'] not in ('approved', 'drafted'):
+        if c["status"] not in ("approved", "drafted"):
             print(f"Warning: status is '{c['status']}' — expected 'approved'. Marking sent anyway.")
-        _pilot.set_status(c['id'], "sent", contacted=True)
+        _pilot.set_status(c["id"], "sent", contacted=True)
         print(f"[{c['id']}] {c['name']} → sent. Follow-up scheduled.")
 
     elif subcmd == "log-reply":
         if not check_api_key():
             print("ANTHROPIC_API_KEY not set — add it to .env")
             return
-        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        c = _resolve_candidate(getattr(args, "name", ""), getattr(args, "id", None))
         if not c:
             return
         print(f"Paste their reply for {c['name']} (press Enter twice when done):")
@@ -808,26 +879,28 @@ def cmd_pilot(args):
         if not reply:
             print("No reply entered.")
             return
-        _pilot.log_reply(c['id'], reply)
+        _pilot.log_reply(c["id"], reply)
         print("Reply logged. Summarizing...")
         summary = summarize_pilot_reply(dict(c), reply)
         if summary:
             print(f"\n--- Summary ---\n{summary}")
-            _pilot.set_reply_summary(c['id'], summary)
-        print(f"\nStatus → replied. Next: leadclaw pilot convert {c['name']} or leadclaw pilot pass {c['name']}")
+            _pilot.set_reply_summary(c["id"], summary)
+        print(
+            f"\nStatus → replied. Next: leadclaw pilot convert {c['name']} or leadclaw pilot pass {c['name']}"
+        )
 
     elif subcmd == "convert":
-        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        c = _resolve_candidate(getattr(args, "name", ""), getattr(args, "id", None))
         if not c:
             return
-        _pilot.set_status(c['id'], "converted")
+        _pilot.set_status(c["id"], "converted")
         print(f"[{c['id']}] {c['name']} → converted pilot user! 🎉")
 
     elif subcmd == "pass":
-        c = _resolve_candidate(getattr(args, 'name', ''), getattr(args, 'id', None))
+        c = _resolve_candidate(getattr(args, "name", ""), getattr(args, "id", None))
         if not c:
             return
-        _pilot.set_status(c['id'], "passed")
+        _pilot.set_status(c["id"], "passed")
         print(f"[{c['id']}] {c['name']} → passed.")
 
     elif subcmd == "followups":
@@ -842,15 +915,31 @@ def cmd_pilot(args):
 
     elif subcmd == "export":
         import csv
+
         candidates = _pilot.get_all_candidates(limit=100000)
         if not candidates:
             print("No candidates to export.")
             return
         out = args.output or "pilot_export.csv"
-        fields = ["id", "name", "business_name", "phone", "email", "service_type",
-                  "location", "source", "score", "status", "notes",
-                  "outreach_draft", "reply_text", "reply_summary",
-                  "contacted_at", "follow_up_after", "created_at"]
+        fields = [
+            "id",
+            "name",
+            "business_name",
+            "phone",
+            "email",
+            "service_type",
+            "location",
+            "source",
+            "score",
+            "status",
+            "notes",
+            "outreach_draft",
+            "reply_text",
+            "reply_summary",
+            "contacted_at",
+            "follow_up_after",
+            "created_at",
+        ]
         with open(out, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()

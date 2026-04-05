@@ -1,6 +1,7 @@
 """
 tests/test_web.py - Web dashboard API + HTML structure tests
 """
+
 import json
 import os
 import threading
@@ -41,6 +42,7 @@ def web_server():
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
+
 def _get(path, port=TEST_WEB_PORT):
     conn = HTTPConnection("127.0.0.1", port, timeout=5)
     conn.request("GET", path)
@@ -63,6 +65,7 @@ def _post(path, data=None, port=TEST_WEB_PORT):
 # ---------------------------------------------------------------------------
 # api_summary / api_closed unit tests (no HTTP)
 # ---------------------------------------------------------------------------
+
 
 def test_api_summary_empty_db():
     data = api_summary()
@@ -120,6 +123,7 @@ def test_api_closed_includes_lost_reason():
 # HTTP GET tests
 # ---------------------------------------------------------------------------
 
+
 def test_http_dashboard_200(web_server):
     status, body = _get("/")
     assert status == 200
@@ -148,6 +152,7 @@ def test_http_404(web_server):
 # POST /api/leads — add lead (including validation)
 # ---------------------------------------------------------------------------
 
+
 def test_post_add_lead_valid(web_server):
     status, body = _post("/api/leads", {"name": "HTTP Add", "service": "gutters"})
     assert status == 201
@@ -173,7 +178,9 @@ def test_post_add_lead_name_too_long(web_server):
 
 
 def test_post_add_lead_invalid_email(web_server):
-    status, body = _post("/api/leads", {"name": "Bad Email", "service": "painting", "email": "notanemail"})
+    status, body = _post(
+        "/api/leads", {"name": "Bad Email", "service": "painting", "email": "notanemail"}
+    )
     assert status == 400
     assert "email" in body.get("error", "")
 
@@ -197,6 +204,7 @@ def test_post_add_lead_no_duplicate_warning_for_unique(web_server):
 # ---------------------------------------------------------------------------
 # POST /api/leads/<id>/edit (validation)
 # ---------------------------------------------------------------------------
+
 
 def test_post_edit_lead(web_server):
     lead_id, _ = queries.add_lead("Edit Me", "painting")
@@ -242,6 +250,7 @@ def test_post_edit_lead_not_found(web_server):
 # POST /api/leads/<id>/quote
 # ---------------------------------------------------------------------------
 
+
 def test_post_quote_valid(web_server):
     lead_id, _ = queries.add_lead("Quote Me", "roofing")
     status, body = _post(f"/api/leads/{lead_id}/quote", {"amount": 1200})
@@ -266,6 +275,7 @@ def test_post_quote_missing_amount(web_server):
 # POST /api/leads/<id>/won
 # ---------------------------------------------------------------------------
 
+
 def test_post_won(web_server):
     lead_id, _ = queries.add_lead("Win Me", "lawn care")
     status, body = _post(f"/api/leads/{lead_id}/won")
@@ -276,6 +286,7 @@ def test_post_won(web_server):
 # ---------------------------------------------------------------------------
 # POST /api/leads/<id>/lost
 # ---------------------------------------------------------------------------
+
 
 def test_post_lost_valid(web_server):
     lead_id, _ = queries.add_lead("Lose Me", "pressure washing")
@@ -307,6 +318,7 @@ def test_post_lost_invalid_reason(web_server):
 # POST /api/leads/<id>/delete
 # ---------------------------------------------------------------------------
 
+
 def test_post_delete(web_server):
     lead_id, _ = queries.add_lead("Delete Me", "fencing")
     status, body = _post(f"/api/leads/{lead_id}/delete")
@@ -323,10 +335,11 @@ def test_post_delete_not_found(web_server):
 # HTML structure tests (browser UI assertions without a browser)
 # ---------------------------------------------------------------------------
 
+
 def test_html_contains_add_button():
     """Dashboard HTML must have the Add Lead button."""
-    assert 'openAdd()' in DASHBOARD_HTML
-    assert '+ Add Lead' in DASHBOARD_HTML
+    assert "openAdd()" in DASHBOARD_HTML
+    assert "+ Add Lead" in DASHBOARD_HTML
 
 
 def test_html_contains_all_modals():
@@ -399,20 +412,20 @@ def test_html_pilot_tab_present():
 def test_html_pilot_table_columns():
     """Pilot table must have score, status, source, follow-up, reply columns."""
     assert 'id="pilot-table"' in DASHBOARD_HTML
-    assert 'Score' in DASHBOARD_HTML
-    assert 'Source' in DASHBOARD_HTML
-    assert 'Follow-up' in DASHBOARD_HTML
-    assert 'Reply' in DASHBOARD_HTML
+    assert "Score" in DASHBOARD_HTML
+    assert "Source" in DASHBOARD_HTML
+    assert "Follow-up" in DASHBOARD_HTML
+    assert "Reply" in DASHBOARD_HTML
 
 
 def test_html_pilot_action_buttons():
     """Pilot action buttons must be present in JS."""
-    assert 'openPilotDraft' in DASHBOARD_HTML
-    assert 'pilotAction' in DASHBOARD_HTML
-    assert 'openPilotReply' in DASHBOARD_HTML
-    assert 'save-and-approve' in DASHBOARD_HTML
-    assert 'mark-sent' in DASHBOARD_HTML
-    assert 'log-reply' in DASHBOARD_HTML
+    assert "openPilotDraft" in DASHBOARD_HTML
+    assert "pilotAction" in DASHBOARD_HTML
+    assert "openPilotReply" in DASHBOARD_HTML
+    assert "save-and-approve" in DASHBOARD_HTML
+    assert "mark-sent" in DASHBOARD_HTML
+    assert "log-reply" in DASHBOARD_HTML
 
 
 def test_html_pilot_modals():
@@ -430,6 +443,7 @@ def test_html_pilot_status_filter():
 # Pilot API HTTP tests
 # ---------------------------------------------------------------------------
 
+
 def test_http_get_pilot_empty(web_server):
     status, body = _get("/api/pilot")
     assert status == 200
@@ -442,6 +456,7 @@ def test_http_get_pilot_empty(web_server):
 def test_http_get_pilot_with_candidates(web_server):
     queries.add_lead("ignore", "roofing")  # leads don't appear in pilot
     from leadclaw import pilot as p
+
     p.add_candidate("Pilot Web Test", service_type="lawn care", phone="555-8888")
     status, body = _get("/api/pilot")
     assert status == 200
@@ -452,6 +467,7 @@ def test_http_get_pilot_with_candidates(web_server):
 
 def test_http_get_pilot_filter_by_status(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Filter Test", service_type="roofing")
     p.set_status(cid, "sent", contacted=True)
     p.add_candidate("New One", service_type="painting")
@@ -463,8 +479,11 @@ def test_http_get_pilot_filter_by_status(web_server):
 
 def test_http_pilot_save_draft(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Draft Save", service_type="fencing")
-    status, body = _post(f"/api/pilot/{cid}/save-draft", {"draft": "Hey, quick question about your fencing work."})
+    status, body = _post(
+        f"/api/pilot/{cid}/save-draft", {"draft": "Hey, quick question about your fencing work."}
+    )
     assert status == 200
     c = p.get_candidate_by_id(cid)
     assert c["outreach_draft"] == "Hey, quick question about your fencing work."
@@ -473,6 +492,7 @@ def test_http_pilot_save_draft(web_server):
 
 def test_http_pilot_save_draft_empty(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Empty Draft", service_type="roofing")
     status, body = _post(f"/api/pilot/{cid}/save-draft", {"draft": ""})
     assert status == 400
@@ -480,8 +500,12 @@ def test_http_pilot_save_draft_empty(web_server):
 
 def test_http_pilot_save_and_approve(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Approve Test", service_type="lawn care")
-    status, body = _post(f"/api/pilot/{cid}/save-and-approve", {"draft": "Hi, I saw your lawn care work on Nextdoor."})
+    status, body = _post(
+        f"/api/pilot/{cid}/save-and-approve",
+        {"draft": "Hi, I saw your lawn care work on Nextdoor."},
+    )
     assert status == 200
     c = p.get_candidate_by_id(cid)
     assert c["status"] == "approved"
@@ -490,6 +514,7 @@ def test_http_pilot_save_and_approve(web_server):
 
 def test_http_pilot_approve_without_draft(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("No Draft", service_type="roofing")
     status, body = _post(f"/api/pilot/{cid}/approve", {})
     assert status == 400
@@ -498,6 +523,7 @@ def test_http_pilot_approve_without_draft(web_server):
 
 def test_http_pilot_approve_with_draft(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Has Draft", service_type="painting")
     p.set_draft(cid, "My draft message.")
     status, body = _post(f"/api/pilot/{cid}/approve", {})
@@ -507,6 +533,7 @@ def test_http_pilot_approve_with_draft(web_server):
 
 def test_http_pilot_mark_sent(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Send Test", service_type="gutters")
     p.set_draft(cid, "draft")
     p.set_status(cid, "approved")
@@ -519,6 +546,7 @@ def test_http_pilot_mark_sent(web_server):
 
 def test_http_pilot_log_reply(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Reply Test", service_type="roofing")
     p.set_status(cid, "sent", contacted=True)
     status, body = _post(f"/api/pilot/{cid}/log-reply", {"reply": "Sure, I'd be interested."})
@@ -530,6 +558,7 @@ def test_http_pilot_log_reply(web_server):
 
 def test_http_pilot_log_reply_empty(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Empty Reply", service_type="fencing")
     status, body = _post(f"/api/pilot/{cid}/log-reply", {"reply": ""})
     assert status == 400
@@ -537,6 +566,7 @@ def test_http_pilot_log_reply_empty(web_server):
 
 def test_http_pilot_convert(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Convert Test", service_type="lawn care")
     p.set_status(cid, "replied")
     status, body = _post(f"/api/pilot/{cid}/convert", {})
@@ -546,6 +576,7 @@ def test_http_pilot_convert(web_server):
 
 def test_http_pilot_pass(web_server):
     from leadclaw import pilot as p
+
     cid, _ = p.add_candidate("Pass Test", service_type="painting")
     status, body = _post(f"/api/pilot/{cid}/pass", {})
     assert status == 200

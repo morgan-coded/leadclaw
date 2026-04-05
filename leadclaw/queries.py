@@ -5,6 +5,7 @@ Note on update_lead: the SET clause is built from an allowlisted dict, not raw u
 The allowlist (`allowed` set) prevents SQL injection — only whitelisted column names
 can appear in the query. Values are always passed as parameterized bindings.
 """
+
 from datetime import datetime  # noqa: I001
 from typing import Optional
 
@@ -267,8 +268,9 @@ def import_leads_from_rows(rows: list) -> dict:
         except (ValueError, TypeError):
             followup_days = DEFAULT_FOLLOWUP_DAYS
         try:
-            add_lead(name, service, phone=phone, email=email,
-                     notes=notes, followup_days=followup_days)
+            add_lead(
+                name, service, phone=phone, email=email, notes=notes, followup_days=followup_days
+            )
             imported += 1
         except Exception as e:  # noqa: BLE001
             errors.append(f"Row {i + 1} ({name}): {e}")

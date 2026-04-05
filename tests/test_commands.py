@@ -1,6 +1,7 @@
 """
 tests/test_commands.py - CLI command logic tests
 """
+
 import os
 from unittest.mock import patch
 
@@ -34,6 +35,7 @@ def fresh_db():
 # ---------------------------------------------------------------------------
 # Parser tests
 # ---------------------------------------------------------------------------
+
 
 def test_parser_today():
     parser = build_parser()
@@ -79,6 +81,7 @@ def test_parser_plain_flag():
 # resolve_lead tests
 # ---------------------------------------------------------------------------
 
+
 def test_resolve_lead_by_name():
     queries.add_lead("John Smith", "painting")
     lead = resolve_lead("John")
@@ -113,6 +116,7 @@ def test_resolve_lead_by_id():
 # cmd_quote tests
 # ---------------------------------------------------------------------------
 
+
 def test_cmd_quote_negative(capsys):
     queries.add_lead("Alice", "roofing")
     parser = build_parser()
@@ -135,6 +139,7 @@ def test_cmd_quote_valid(capsys):
 # ---------------------------------------------------------------------------
 # cmd_list tests
 # ---------------------------------------------------------------------------
+
 
 def test_cmd_list_active_only(capsys):
     queries.add_lead("Active", "painting")
@@ -164,6 +169,7 @@ def test_cmd_list_all_includes_won(capsys):
 # cmd_digest tests
 # ---------------------------------------------------------------------------
 
+
 def test_cmd_digest_output(capsys):
     queries.add_lead("Test Lead", "service")
     parser = build_parser()
@@ -176,6 +182,7 @@ def test_cmd_digest_output(capsys):
 # ---------------------------------------------------------------------------
 # cmd_export tests
 # ---------------------------------------------------------------------------
+
 
 def test_cmd_import_valid_csv(tmp_path, capsys):
     csv_content = "name,service,phone,notes\nImport Lead,painting,555-9999,test note\n"
@@ -238,6 +245,7 @@ def test_cmd_export_creates_file(tmp_path):
 # fmt_lead / print_pipeline_summary tests
 # ---------------------------------------------------------------------------
 
+
 def test_fmt_lead_contains_name():
     lead_id, _ = queries.add_lead("Display Test", "gutters")
     lead = queries.get_lead_by_id(lead_id)
@@ -261,9 +269,11 @@ def test_print_pipeline_summary_output(capsys):
 # Plain-mode output tests
 # ---------------------------------------------------------------------------
 
+
 def test_fmt_lead_plain_no_emoji(capsys):
     """fmt_lead() in plain mode must emit bracket labels, not emoji."""
     import leadclaw.commands as cmd_mod
+
     lead_id, _ = queries.add_lead("Plain Test", "siding")
     lead = queries.get_lead_by_id(lead_id)
     original = cmd_mod._PLAIN
@@ -279,6 +289,7 @@ def test_fmt_lead_plain_no_emoji(capsys):
 def test_print_pipeline_summary_plain_no_emoji(capsys):
     """print_pipeline_summary() in plain mode must emit bracket labels, not emoji."""
     import leadclaw.commands as cmd_mod
+
     queries.add_lead("P Plain", "fencing")
     summary, totals = queries.get_pipeline_summary()
     original = cmd_mod._PLAIN
@@ -296,6 +307,7 @@ def test_print_pipeline_summary_plain_no_emoji(capsys):
 # AI command mocking
 # ---------------------------------------------------------------------------
 
+
 def test_draft_followup_mocked(capsys):
     queries.add_lead("AI Lead", "pressure washing")
     with patch("leadclaw.commands.draft_followup", return_value="Hey, just checking in!"):
@@ -303,6 +315,7 @@ def test_draft_followup_mocked(capsys):
             parser = build_parser()
             args = parser.parse_args(["draft-followup", "AI Lead"])
             from leadclaw.commands import cmd_draft
+
             cmd_draft(args)
     out = capsys.readouterr().out
     assert "Hey, just checking in!" in out
@@ -315,6 +328,7 @@ def test_summarize_mocked(capsys):
             parser = build_parser()
             args = parser.parse_args(["summarize", "Sum Lead"])
             from leadclaw.commands import cmd_summarize
+
             cmd_summarize(args)
     out = capsys.readouterr().out
     assert "This lead needs follow-up." in out
