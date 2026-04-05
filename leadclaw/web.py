@@ -174,14 +174,15 @@ def _send_verification_email(to_email: str, token: str):
     msg["To"] = to_email
 
     try:
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
             server.ehlo()
             server.starttls()
             server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, [to_email], msg.as_string())
     except Exception as exc:
-        # Don't crash signup if email fails — log and continue
+        # Don't crash signup if email fails — log link so admin can verify manually
         print(f"WARNING: Failed to send verification email: {exc}", file=sys.stderr)
+        print(f"[FALLBACK] Verification link for {to_email}: {link}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
