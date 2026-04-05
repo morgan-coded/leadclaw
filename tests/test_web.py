@@ -12,7 +12,7 @@ import pytest
 
 from leadclaw import db, queries
 from leadclaw.config import MAX_NAME_LENGTH
-from leadclaw.web import DASHBOARD_HTML, app, api_summary, api_closed
+from leadclaw.web import DASHBOARD_HTML, api_closed, api_summary, app
 from tests.conftest import TEST_DB
 
 # ---------------------------------------------------------------------------
@@ -42,6 +42,7 @@ def client():
 def auth_client(client):
     """A test client already logged in as a verified user."""
     import bcrypt
+
     from leadclaw.db import create_user, verify_user_email
 
     email = "test@example.com"
@@ -83,7 +84,7 @@ def test_api_summary_lead_fields():
     queries.add_lead("Field Check", "fencing", phone="555-9999", email="a@b.com",
                      notes="test", user_id=1)
     data = api_summary(user_id=1)
-    lead = next(l for l in data["active"] if l["name"] == "Field Check")
+    lead = next(row for row in data["active"] if row["name"] == "Field Check")
     assert lead["phone"] == "555-9999"
     assert lead["email"] == "a@b.com"
     assert lead["notes"] == "test"
@@ -102,7 +103,7 @@ def test_api_closed_contains_won_and_lost():
     queries.mark_won(id1)
     queries.mark_lost(id2, "price")
     data = api_closed(user_id=1)
-    names = [l["name"] for l in data["closed"]]
+    names = [row["name"] for row in data["closed"]]
     assert "Won Lead" in names
     assert "Lost Lead" in names
     assert "Active Lead" not in names
@@ -112,7 +113,7 @@ def test_api_closed_includes_lost_reason():
     id1, _ = queries.add_lead("Lost With Reason", "painting", user_id=1)
     queries.mark_lost(id1, "price")
     data = api_closed(user_id=1)
-    lead = next(l for l in data["closed"] if l["name"] == "Lost With Reason")
+    lead = next(row for row in data["closed"] if row["name"] == "Lost With Reason")
     assert lead["lost_reason"] == "price"
 
 
@@ -598,7 +599,6 @@ def test_http_pilot_not_found(auth_client):
 
 
 def test_signup_creates_user(client):
-    import bcrypt
     r = client.post("/signup", data={
         "email": "new@example.com",
         "password": "securepass123",
@@ -631,6 +631,7 @@ def test_signup_short_password(client):
 
 def test_signup_duplicate_email(client):
     import bcrypt
+
     from leadclaw.db import create_user
     pw = bcrypt.hashpw(b"pass1234", bcrypt.gensalt()).decode()
     create_user("dup@example.com", pw, "tok")
@@ -644,6 +645,7 @@ def test_signup_duplicate_email(client):
 
 def test_verify_token_logs_in(client):
     import bcrypt
+
     from leadclaw.db import create_user
     pw = bcrypt.hashpw(b"pass1234", bcrypt.gensalt()).decode()
     uid = create_user("verify@example.com", pw, "my-secret-token")
@@ -662,6 +664,7 @@ def test_verify_invalid_token(client):
 def test_login_unverified_user_can_login_but_dashboard_blocked(client):
     """User can log in but is redirected to unverified page when accessing dashboard."""
     import bcrypt
+
     from leadclaw.db import create_user
     pw = bcrypt.hashpw(b"pass1234", bcrypt.gensalt()).decode()
     create_user("unverified@example.com", pw, "some-token")
@@ -673,6 +676,7 @@ def test_login_unverified_user_can_login_but_dashboard_blocked(client):
 
 def test_login_wrong_password(client):
     import bcrypt
+
     from leadclaw.db import create_user, verify_user_email
     pw = bcrypt.hashpw(b"correct", bcrypt.gensalt()).decode()
     uid = create_user("wrongpw@example.com", pw, "tok")

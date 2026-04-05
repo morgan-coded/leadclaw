@@ -24,6 +24,7 @@ Environment variables:
     APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
 """
 
+import json as _json
 import os
 import secrets
 import smtplib
@@ -34,12 +35,11 @@ from email.mime.text import MIMEText
 import bcrypt
 from flask import (
     Flask,
+    jsonify,
     redirect,
     render_template_string,
     request,
     url_for,
-    jsonify,
-    session,
 )
 from flask_login import (
     LoginManager,
@@ -79,9 +79,6 @@ from leadclaw.queries import (
     update_lead,
     update_quote,
 )
-
-import json
-import re
 
 # ---------------------------------------------------------------------------
 # Flask app setup
@@ -390,8 +387,6 @@ def verified_required(f):
 # ---------------------------------------------------------------------------
 # JSON / data helpers
 # ---------------------------------------------------------------------------
-
-import json as _json
 
 _LOST_REASONS_JS = _json.dumps(LOST_REASONS)
 _MAX_NAME_JS = MAX_NAME_LENGTH
@@ -717,7 +712,7 @@ def _build_dashboard_html(user_email: str) -> str:
 const LOST_REASONS=__LOST_REASONS_JS__;
 const MAX_NAME=__MAX_NAME_JS__;
 const MAX_FIELD=__MAX_FIELD_JS__'''
-        + ''';
+        + r''';
 
 (function(){
   const sel=document.getElementById('lost-reason');
