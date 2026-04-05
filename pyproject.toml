@@ -7,6 +7,10 @@ name = "leadclaw"
 version = "0.4.0"
 description = "Lightweight lead tracking CLI for local service businesses"
 requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    { name = "Morgan Labs", email = "morgan@morganlabs.org" },
+]
 dependencies = [
     "anthropic>=0.25",
     "python-dotenv~=1.0",
@@ -14,6 +18,11 @@ dependencies = [
     "flask-login>=0.6",
     "bcrypt>=4.0",
 ]
+
+[project.urls]
+Homepage = "https://morganlabs.org"
+Repository = "https://github.com/morgan-coded/leadclaw"
+Issues = "https://github.com/morgan-coded/leadclaw/issues"
 
 [project.scripts]
 leadclaw = "leadclaw.commands:main"

@@ -50,6 +50,7 @@ from flask_login import (
     logout_user,
 )
 
+import leadclaw.pilot as _pilot
 from leadclaw.config import (
     DEFAULT_FOLLOWUP_DAYS,
     LOST_REASONS,
@@ -78,7 +79,6 @@ from leadclaw.queries import (
     update_lead,
     update_quote,
 )
-import leadclaw.pilot as _pilot
 
 import json
 import re
@@ -410,7 +410,9 @@ def _lead_to_dict(row) -> dict:
         "follow_up_after": str(row["follow_up_after"])[:10] if row["follow_up_after"] else None,
         "notes": row["notes"],
         "lost_reason": row["lost_reason"],
-        "lost_reason_notes": row["lost_reason_notes"] if "lost_reason_notes" in row.keys() else None,
+        "lost_reason_notes": row["lost_reason_notes"]
+        if "lost_reason_notes" in row.keys()
+        else None,
     }
 
 
@@ -709,9 +711,15 @@ def _build_dashboard_html(user_email: str) -> str:
 <div class="toast" id="toast"></div>
 
 <script>
-const LOST_REASONS=""" + _LOST_REASONS_JS + """;
-const MAX_NAME=""" + str(_MAX_NAME_JS) + """;
-const MAX_FIELD=""" + str(_MAX_FIELD_JS) + r""";
+const LOST_REASONS="""
+    + _LOST_REASONS_JS
+    + """;
+const MAX_NAME="""
+    + str(_MAX_NAME_JS)
+    + """;
+const MAX_FIELD="""
+    + str(_MAX_FIELD_JS)
+    + r""";
 
 (function(){
   const sel=document.getElementById('lost-reason');
@@ -1050,6 +1058,7 @@ load();
 </script>
 </body>
 </html>"""
+)
 
 
 # Store this for test assertions

@@ -1,6 +1,7 @@
 """
 drafting.py - Claude-powered drafts and summaries
 """
+
 import os
 from datetime import datetime
 from typing import Optional
@@ -91,7 +92,9 @@ def draft_followup(lead: dict) -> Optional[str]:
     elif status == "quoted":
         tone = "Quote already sent. Follow up gently — ask if they have questions or want to move forward."
     elif overdue and overdue > 7:
-        tone = "It's been a while. Be brief, low-pressure — give them an easy out if they've moved on."
+        tone = (
+            "It's been a while. Be brief, low-pressure — give them an easy out if they've moved on."
+        )
     else:
         tone = "Check in naturally. Short and friendly."
 
@@ -178,9 +181,7 @@ def summarize_pilot_reply(candidate: dict, reply_text: str) -> Optional[str]:
 def summarize_pipeline(leads: list, summary_rows: list) -> Optional[str]:
     status_counts = {row["status"]: row["count"] for row in summary_rows}
     open_statuses = {"new", "quoted", "followup_due"}
-    total_value = sum(
-        row["total_quoted"] for row in summary_rows if row["status"] in open_statuses
-    )
+    total_value = sum(row["total_quoted"] for row in summary_rows if row["status"] in open_statuses)
     stale = [lead for lead in leads if lead["status"] == "followup_due"]
     high_value = sorted(
         [lead for lead in leads if lead.get("quote_amount")],
@@ -188,10 +189,13 @@ def summarize_pipeline(leads: list, summary_rows: list) -> Optional[str]:
         reverse=True,
     )[:3]
 
-    hv_lines = "\n".join(
-        f"  - {lead['name']}: ${lead['quote_amount']:.0f} ({lead['service']})"
-        for lead in high_value
-    ) or "  none"
+    hv_lines = (
+        "\n".join(
+            f"  - {lead['name']}: ${lead['quote_amount']:.0f} ({lead['service']})"
+            for lead in high_value
+        )
+        or "  none"
+    )
 
     context = (
         "Pipeline snapshot:\n"

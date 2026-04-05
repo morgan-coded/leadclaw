@@ -1,6 +1,7 @@
 """
 leadclaw/db.py - Database connection and initialization
 """
+
 import os
 import sqlite3
 from contextlib import contextmanager

@@ -1,11 +1,13 @@
 """
 leadclaw/config.py - Shared constants and configuration
 """
+
 import os
 
 # Load .env if present
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -26,8 +28,13 @@ STATUS_LABELS = {
 
 # Valid loss reasons
 LOST_REASONS = [
-    "price", "timing", "went_competitor",
-    "no_response", "not_qualified", "service_area", "other",
+    "price",
+    "timing",
+    "went_competitor",
+    "no_response",
+    "not_qualified",
+    "service_area",
+    "other",
 ]
 
 DEFAULT_FOLLOWUP_DAYS = 3

@@ -4,6 +4,7 @@ tests/test_web.py - Web dashboard API + HTML structure tests
 Uses Flask test client (no live HTTP server thread needed).
 Auth is bypassed by creating a user and logging in through the test client.
 """
+
 import json
 import os
 
@@ -61,6 +62,7 @@ def auth_client(client):
 # ---------------------------------------------------------------------------
 
 
+
 def test_api_summary_empty_db():
     data = api_summary(user_id=1)
     assert "pipeline" in data and "today" in data and "stale" in data and "active" in data
@@ -73,7 +75,7 @@ def test_api_summary_with_leads():
     queries.update_quote(id2, 1500.0)
     data = api_summary(user_id=1)
     assert data["pipeline"]["open_value"] > 0
-    names = [l["name"] for l in data["active"]]
+    names = [lead["name"] for lead in data["active"]]
     assert "Web Test" in names and "Quoted Lead" in names
 
 
