@@ -100,6 +100,10 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 
+# Initialize DB at import time so gunicorn workers have schema ready
+with app.app_context():
+    init_db()
+
 # ---------------------------------------------------------------------------
 # User model for flask-login
 # ---------------------------------------------------------------------------
