@@ -24,8 +24,8 @@ Environment variables:
     APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
 """
 
-import json as _json
 import html as _html
+import json as _json
 import os
 import secrets
 import smtplib
@@ -521,7 +521,7 @@ def api_pilot_candidates(user_id: int, status: str = None) -> dict:
 
 def _build_dashboard_html(user_email: str) -> str:
     """Return the full dashboard HTML with user email and signout link injected."""
-    _html = (
+    _page = (
         """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1098,7 +1098,7 @@ load();
 </html>"""
     )
     return (
-        _html.replace("__LOST_REASONS_JS__", _LOST_REASONS_JS)
+        _page.replace("__LOST_REASONS_JS__", _LOST_REASONS_JS)
         .replace("__MAX_NAME_JS__", str(_MAX_NAME_JS))
         .replace("__MAX_FIELD_JS__", str(_MAX_FIELD_JS))
     )

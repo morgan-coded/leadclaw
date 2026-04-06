@@ -317,7 +317,9 @@ def set_reply_summary(cid: int, summary: str):
 def delete_candidate(cid: int, user_id: Optional[int] = None):
     with get_conn() as conn:
         if user_id is not None:
-            conn.execute("DELETE FROM pilot_candidates WHERE id = ? AND user_id = ?", (cid, user_id))
+            conn.execute(
+                "DELETE FROM pilot_candidates WHERE id = ? AND user_id = ?", (cid, user_id)
+            )
         else:
             conn.execute("DELETE FROM pilot_candidates WHERE id = ?", (cid,))
 

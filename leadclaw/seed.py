@@ -185,6 +185,7 @@ def seed(force: bool = False):
 
 def main():
     import sys
+
     force = "--force" in sys.argv
     init_db()
     seed(force=force)
