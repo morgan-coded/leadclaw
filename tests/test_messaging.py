@@ -1,20 +1,21 @@
 """Tests for communication automation: reminder queries and message templates."""
 import os
+
 import pytest
 
 from leadclaw import db
-from leadclaw.db import init_db, get_conn
+from leadclaw.db import get_conn
+from leadclaw.drafting import MSG_TYPES, draft_message
 from leadclaw.queries import (
     add_lead,
+    get_job_today_leads,
+    get_reactivation_leads,
+    get_review_reminders,
     mark_booked,
     mark_completed,
     mark_paid,
-    get_job_today_leads,
-    get_review_reminders,
-    get_reactivation_leads,
     set_review_reminder,
 )
-from leadclaw.drafting import draft_message, MSG_TYPES
 from tests.conftest import TEST_DB
 
 
@@ -113,7 +114,7 @@ def test_get_job_today_leads_booked_today():
     lead_id = _add()
     mark_booked(lead_id, str(date.today()))
     leads = get_job_today_leads()
-    assert any(l["id"] == lead_id for l in leads)
+    assert any(lead["id"] == lead_id for lead in leads)
 
 
 def test_get_job_today_leads_excludes_non_booked():
@@ -127,14 +128,14 @@ def test_get_job_today_leads_excludes_non_booked():
             (str(date.today()), lead_id),
         )
     leads = get_job_today_leads()
-    assert not any(l["id"] == lead_id for l in leads)
+    assert not any(lead["id"] == lead_id for lead in leads)
 
 
 def test_get_job_today_leads_excludes_future_bookings():
     lead_id = _add()
     mark_booked(lead_id, "2099-12-31")
     leads = get_job_today_leads()
-    assert not any(l["id"] == lead_id for l in leads)
+    assert not any(lead["id"] == lead_id for lead in leads)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +155,7 @@ def test_get_review_reminders_after_complete():
     # review_reminder_at = tomorrow by default; manually set to today
     set_review_reminder(lead_id, days=0)
     reminders = get_review_reminders()
-    assert any(l["id"] == lead_id for l in reminders)
+    assert any(lead["id"] == lead_id for lead in reminders)
 
 
 def test_get_review_reminders_future_not_shown():
@@ -164,7 +165,7 @@ def test_get_review_reminders_future_not_shown():
     mark_completed(lead_id)
     # review_reminder_at is tomorrow (set by mark_completed) — should NOT appear yet
     reminders = get_review_reminders()
-    assert not any(l["id"] == lead_id for l in reminders)
+    assert not any(lead["id"] == lead_id for lead in reminders)
 
 
 # ---------------------------------------------------------------------------
@@ -175,14 +176,14 @@ def test_set_review_reminder_today():
     lead_id = _add()
     set_review_reminder(lead_id, days=0)
     reminders = get_review_reminders()
-    assert any(l["id"] == lead_id for l in reminders)
+    assert any(lead["id"] == lead_id for lead in reminders)
 
 
 def test_set_review_reminder_future_not_in_due():
     lead_id = _add()
     set_review_reminder(lead_id, days=7)
     reminders = get_review_reminders()
-    assert not any(l["id"] == lead_id for l in reminders)
+    assert not any(lead["id"] == lead_id for lead in reminders)
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +266,7 @@ def test_reactivation_30_bucket():
     """Lead last contacted 30 days ago should appear in 30-bucket."""
     lead_id = _add_with_last_contact(30)
     leads = get_reactivation_leads(30)
-    assert any(l["id"] == lead_id for l in leads)
+    assert any(lead["id"] == lead_id for lead in leads)
 
 
 def test_reactivation_30_excludes_59_boundary():
@@ -273,8 +274,8 @@ def test_reactivation_30_excludes_59_boundary():
     lead_id = _add_with_last_contact(59)
     leads_30 = get_reactivation_leads(30)
     leads_60 = get_reactivation_leads(60)
-    assert any(l["id"] == lead_id for l in leads_30)
-    assert not any(l["id"] == lead_id for l in leads_60)
+    assert any(lead["id"] == lead_id for lead in leads_30)
+    assert not any(lead["id"] == lead_id for lead in leads_60)
 
 
 def test_reactivation_60_bucket():
@@ -282,8 +283,8 @@ def test_reactivation_60_bucket():
     lead_id = _add_with_last_contact(60)
     leads_30 = get_reactivation_leads(30)
     leads_60 = get_reactivation_leads(60)
-    assert not any(l["id"] == lead_id for l in leads_30)
-    assert any(l["id"] == lead_id for l in leads_60)
+    assert not any(lead["id"] == lead_id for lead in leads_30)
+    assert any(lead["id"] == lead_id for lead in leads_60)
 
 
 def test_reactivation_90_bucket():
@@ -292,26 +293,25 @@ def test_reactivation_90_bucket():
     leads_30 = get_reactivation_leads(30)
     leads_60 = get_reactivation_leads(60)
     leads_90 = get_reactivation_leads(90)
-    assert not any(l["id"] == lead_id for l in leads_30)
-    assert not any(l["id"] == lead_id for l in leads_60)
-    assert any(l["id"] == lead_id for l in leads_90)
+    assert not any(lead["id"] == lead_id for lead in leads_30)
+    assert not any(lead["id"] == lead_id for lead in leads_60)
+    assert any(lead["id"] == lead_id for lead in leads_90)
 
 
 def test_reactivation_90_open_upper_bound():
     """Lead last contacted 120 days ago should appear in 90-bucket (open upper bound)."""
     lead_id = _add_with_last_contact(120)
     leads_90 = get_reactivation_leads(90)
-    assert any(l["id"] == lead_id for l in leads_90)
+    assert any(lead["id"] == lead_id for lead in leads_90)
 
 
 def test_reactivation_excludes_post_job_statuses():
     """Booked, completed, paid, won, lost leads should not appear in any reactivation bucket."""
-    from datetime import date
     for status in ("booked", "completed", "paid", "won", "lost"):
         lead_id = _add_with_last_contact(45, status=status)
         for days in [30, 60, 90]:
             leads = get_reactivation_leads(days)
-            assert not any(l["id"] == lead_id for l in leads), (
+            assert not any(lead["id"] == lead_id for lead in leads), (
                 f"Status '{status}' should be excluded from reactivation-{days} bucket"
             )
 
@@ -319,7 +319,7 @@ def test_reactivation_excludes_post_job_statuses():
 def test_reactivation_no_overlap_between_buckets():
     """A single lead should appear in exactly one bucket."""
     lead_id = _add_with_last_contact(45)
-    in_30 = any(l["id"] == lead_id for l in get_reactivation_leads(30))
-    in_60 = any(l["id"] == lead_id for l in get_reactivation_leads(60))
-    in_90 = any(l["id"] == lead_id for l in get_reactivation_leads(90))
+    in_30 = any(lead["id"] == lead_id for lead in get_reactivation_leads(30))
+    in_60 = any(lead["id"] == lead_id for lead in get_reactivation_leads(60))
+    in_90 = any(lead["id"] == lead_id for lead in get_reactivation_leads(90))
     assert sum([in_30, in_60, in_90]) == 1, "Lead should appear in exactly one reactivation bucket"

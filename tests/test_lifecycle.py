@@ -28,7 +28,7 @@ def _add_lead():
 
 
 def test_mark_booked_sets_status_and_date():
-    from leadclaw.queries import mark_booked, get_lead_by_id
+    from leadclaw.queries import get_lead_by_id, mark_booked
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")
     updated = get_lead_by_id(lead["id"])
@@ -39,7 +39,7 @@ def test_mark_booked_sets_status_and_date():
 
 
 def test_mark_completed_sets_status_and_timestamp():
-    from leadclaw.queries import mark_booked, mark_completed, get_lead_by_id
+    from leadclaw.queries import get_lead_by_id, mark_booked, mark_completed
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")
     mark_completed(lead["id"])
@@ -49,7 +49,7 @@ def test_mark_completed_sets_status_and_timestamp():
 
 
 def test_mark_invoice_sent_sets_timestamps():
-    from leadclaw.queries import mark_booked, mark_completed, mark_invoice_sent, get_lead_by_id
+    from leadclaw.queries import get_lead_by_id, mark_booked, mark_completed, mark_invoice_sent
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")
     mark_completed(lead["id"])
@@ -61,7 +61,7 @@ def test_mark_invoice_sent_sets_timestamps():
 
 
 def test_mark_invoice_sent_defaults_to_quote_amount():
-    from leadclaw.queries import update_quote, mark_invoice_sent, get_lead_by_id
+    from leadclaw.queries import get_lead_by_id, mark_invoice_sent, update_quote
     lead = _add_lead()
     update_quote(lead["id"], 750.0)
     mark_invoice_sent(lead["id"])
@@ -71,7 +71,11 @@ def test_mark_invoice_sent_defaults_to_quote_amount():
 
 def test_mark_paid_sets_status_and_service_reminder():
     from leadclaw.queries import (
-        mark_booked, mark_completed, mark_invoice_sent, mark_paid, get_lead_by_id
+        get_lead_by_id,
+        mark_booked,
+        mark_completed,
+        mark_invoice_sent,
+        mark_paid,
     )
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")
@@ -88,8 +92,12 @@ def test_mark_paid_sets_status_and_service_reminder():
 
 def test_set_next_service_updates_date():
     from leadclaw.queries import (
-        mark_booked, mark_completed, mark_invoice_sent, mark_paid,
-        set_next_service, get_lead_by_id
+        get_lead_by_id,
+        mark_booked,
+        mark_completed,
+        mark_invoice_sent,
+        mark_paid,
+        set_next_service,
     )
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")
@@ -106,7 +114,10 @@ def test_get_invoice_reminders_returns_overdue():
     """Set invoice_reminder_at to past date and confirm it shows up."""
     from leadclaw.db import get_conn
     from leadclaw.queries import (
-        mark_booked, mark_completed, mark_invoice_sent, get_invoice_reminders
+        get_invoice_reminders,
+        mark_booked,
+        mark_completed,
+        mark_invoice_sent,
     )
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")
@@ -128,7 +139,11 @@ def test_get_invoice_reminders_returns_overdue():
 def test_get_invoice_reminders_excludes_paid():
     from leadclaw.db import get_conn
     from leadclaw.queries import (
-        mark_booked, mark_completed, mark_invoice_sent, mark_paid, get_invoice_reminders
+        get_invoice_reminders,
+        mark_booked,
+        mark_completed,
+        mark_invoice_sent,
+        mark_paid,
     )
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")
@@ -150,7 +165,11 @@ def test_get_invoice_reminders_excludes_paid():
 def test_get_service_reminders_returns_overdue():
     from leadclaw.db import get_conn
     from leadclaw.queries import (
-        mark_booked, mark_completed, mark_invoice_sent, mark_paid, get_service_reminders
+        get_service_reminders,
+        mark_booked,
+        mark_completed,
+        mark_invoice_sent,
+        mark_paid,
     )
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")
@@ -172,7 +191,11 @@ def test_get_service_reminders_returns_overdue():
 
 def test_get_service_reminders_excludes_future():
     from leadclaw.queries import (
-        mark_booked, mark_completed, mark_invoice_sent, mark_paid, get_service_reminders
+        get_service_reminders,
+        mark_booked,
+        mark_completed,
+        mark_invoice_sent,
+        mark_paid,
     )
     lead = _add_lead()
     mark_booked(lead["id"], "2026-06-01")

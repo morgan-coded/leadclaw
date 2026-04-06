@@ -1881,7 +1881,6 @@ def api_invoice_lead(lead_id):
 @login_required
 @verified_required
 def api_paid_lead(lead_id):
-    from leadclaw.config import DEFAULT_RECURRING_DAYS
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
         return jsonify({"error": "Not found"}), 404

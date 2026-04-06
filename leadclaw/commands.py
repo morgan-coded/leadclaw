@@ -482,8 +482,8 @@ def cmd_reminders(args):
     _print_section("Reactivation — 60 days", react_60)
     _print_section("Reactivation — 90 days", react_90)
 
-    print(f"\nTip: leadclaw draft-message <name> --type <type>")
-    print(f"Tip: leadclaw dismiss-reminder <name> --type <review_request|reactivation|job_today>")
+    print("\nTip: leadclaw draft-message <name> --type <type>")
+    print("Tip: leadclaw dismiss-reminder <name> --type <review_request|reactivation|job_today>")
 
 
 def cmd_dismiss_reminder(args):
@@ -502,7 +502,7 @@ def cmd_dismiss_reminder(args):
                  "job_today": "Job reminder dismissed for today"}.get(reminder_type, "Dismissed")
         print(f"[{lead['id']}] {lead['name']} — {label}.")
     else:
-        print(f"Could not dismiss reminder (lead not found or no change).")
+        print("Could not dismiss reminder (lead not found or no change).")
 
 
 def cmd_usage(args):

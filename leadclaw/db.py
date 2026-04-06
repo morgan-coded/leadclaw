@@ -125,7 +125,6 @@ def init_db():
             "job_reminder_dismissed_at TEXT",
         ]
         for col_def in new_columns:
-            col_name = col_def.split()[0]
             try:
                 conn.execute(f"ALTER TABLE leads ADD COLUMN {col_def}")
             except sqlite3.OperationalError as e:

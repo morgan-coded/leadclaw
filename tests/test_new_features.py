@@ -11,7 +11,6 @@ import os
 
 import pytest
 
-from leadclaw import db, queries
 from leadclaw.db import get_conn, init_db
 from leadclaw.queries import (
     add_lead,
@@ -29,7 +28,11 @@ from leadclaw.queries import (
     set_next_service,
     update_quote,
 )
-from leadclaw.service_defaults import DEFAULT_SERVICE_INTERVAL, SERVICE_INTERVALS, get_service_interval
+from leadclaw.service_defaults import (
+    DEFAULT_SERVICE_INTERVAL,
+    SERVICE_INTERVALS,
+    get_service_interval,
+)
 from tests.conftest import TEST_DB
 
 
@@ -366,9 +369,10 @@ def test_api_closed_includes_paid_leads():
 
 def _make_auth_client():
     """Helper to create an authenticated test client."""
-    from leadclaw.web import app
     import bcrypt
+
     from leadclaw.db import create_user, verify_user_email
+    from leadclaw.web import app
 
     app.config["TESTING"] = True
     client = app.test_client()
