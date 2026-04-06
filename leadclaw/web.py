@@ -51,6 +51,7 @@ from flask_login import (
     logout_user,
 )
 
+import leadclaw.availability as _avail
 import leadclaw.pilot as _pilot
 from leadclaw.config import (
     DEFAULT_FOLLOWUP_DAYS,
@@ -418,6 +419,9 @@ _REQUEST_SUCCESS_HTML = (
     "<div class='success-icon'>✅</div>"
     "<div class='success-msg'>Request Received!</div>"
     "<div class='success-sub'>Thanks, {{ name }}! We'll review your request and reach out soon.</div>"
+    "{% if avail_warning %}"
+    "<div class='info' style='margin-top:16px;text-align:left'>\U0001f4c5 {{ avail_warning }}</div>"
+    "{% endif %}"
     "</div>"
     "</div></body></html>"
 )
@@ -478,6 +482,20 @@ def public_request():
             422,
         )
 
+    # Soft availability check — warn but never block submission
+    avail_warning = None
+    if requested_date:
+        try:
+            avail = _avail.get_availability(user_id=1)
+            check = _avail.check_date(requested_date, avail)
+            if not check["ok"]:
+                avail_warning = (
+                    f"Note: your preferred date ({requested_date}) may not be available "
+                    "\u2014 we'll reach out to confirm a time that works."
+                )
+        except Exception:
+            pass  # availability check is best-effort
+
     add_lead(
         name=name,
         service=service,
@@ -491,7 +509,7 @@ def public_request():
         user_id=1,
     )
 
-    return render_template_string(_REQUEST_SUCCESS_HTML, name=name)
+    return render_template_string(_REQUEST_SUCCESS_HTML, name=name, avail_warning=avail_warning)
 
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1097,63 @@ def api_next_service(lead_id):
 # ---------------------------------------------------------------------------
 # Reminder dismissal + usage endpoints
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Availability settings endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/availability", methods=["GET"])
+@login_required
+@verified_required
+def route_get_availability():
+    """Return current availability settings for the logged-in user."""
+    try:
+        avail = _avail.get_availability(current_user.id)
+        avail["next_available"] = _avail.next_available_date(avail)
+        avail["working_days_hint"] = _avail.working_days_hint(avail)
+        return jsonify(avail)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/availability", methods=["POST"])
+@login_required
+@verified_required
+def route_set_availability():
+    """Save availability settings."""
+    data = request.get_json(silent=True) or {}
+    allowed_weekdays = data.get("allowed_weekdays")
+    if allowed_weekdays is None or not isinstance(allowed_weekdays, list):
+        return jsonify({"error": "allowed_weekdays must be a list of ints (0=Mon...6=Sun)"}), 400
+    if any(not isinstance(d, int) or d < 0 or d > 6 for d in allowed_weekdays):
+        return jsonify({"error": "allowed_weekdays values must be 0–6"}), 400
+    blocked_dates = data.get("blocked_dates")
+    if blocked_dates is None:
+        blocked_dates = []
+    if not isinstance(blocked_dates, list):
+        return jsonify({"error": "blocked_dates must be a list of YYYY-MM-DD strings"}), 400
+    # Validate each blocked date
+    for d in blocked_dates:
+        if not _valid_date(str(d).strip()):
+            return jsonify({"error": f"Invalid blocked date: {d!r}"}), 400
+    _avail.set_availability(current_user.id, allowed_weekdays, blocked_dates)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/availability/check")
+@login_required
+@verified_required
+def route_check_availability():
+    """Check whether a date is available. ?date=YYYY-MM-DD"""
+    date_str = (request.args.get("date") or "").strip()
+    if not date_str or not _valid_date(date_str):
+        return jsonify({"error": "date query param required (YYYY-MM-DD)"}), 400
+    avail = _avail.get_availability(current_user.id)
+    result = _avail.check_date(date_str, avail)
+    result["next_available"] = _avail.next_available_date(avail, from_date=date_str)
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------

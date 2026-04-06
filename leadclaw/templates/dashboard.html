@@ -85,6 +85,14 @@
   .req-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;}
   .req-actions .btn{flex:1;min-width:0;min-height:44px;}
   .req-filter-row{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap;}
+  .avail-warn{background:#2a1a0a;border:1px solid #92400e;border-radius:8px;padding:8px 12px;font-size:12px;color:#fbbf24;margin-top:8px;display:none;}
+  .avail-ok{background:#0d2a1a;border:1px solid #065f46;border-radius:8px;padding:8px 12px;font-size:12px;color:#34d399;margin-top:8px;display:none;}
+  .avail-day-grid{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}
+  .avail-day-btn{padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s;}
+  .avail-day-btn.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .avail-blocked-list{display:flex;flex-direction:column;gap:4px;margin-top:6px;}
+  .avail-blocked-item{display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border-radius:6px;padding:6px 10px;font-size:12px;}
+  .avail-blocked-remove{background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 4px;}
   .badge-completed{background:#1a2a3a;color:#60a5fa;}
   .badge-paid{background:#1a3a2a;color:#34d399;}
   .empty{color:var(--muted);font-style:italic;padding:16px 0;text-align:center;}
@@ -227,6 +235,27 @@
     </section>
   </div>
   <div class="tab-panel" id="tab-more">
+    <section>
+      <h2>&#x1F4C5; Availability</h2>
+      <div id="avail-loading" style="color:var(--muted);font-size:13px">Loading...</div>
+      <div id="avail-form" style="display:none">
+        <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Set the days you take bookings. Conflicts show as warnings when booking a request — you can always override.</p>
+        <div class="form-group">
+          <label>Available Days</label>
+          <div class="avail-day-grid" id="avail-day-grid"></div>
+        </div>
+        <div class="form-group">
+          <label>Blocked Dates</label>
+          <div class="avail-blocked-list" id="avail-blocked-list"></div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input id="avail-block-input" type="date" style="flex:1;height:40px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:14px;outline:none">
+            <button class="btn btn-primary" style="white-space:nowrap;height:40px" onclick="addBlockedDate()">+ Block Date</button>
+          </div>
+        </div>
+        <div id="avail-save-status" style="font-size:12px;color:var(--green);display:none;margin-bottom:6px"></div>
+        <button class="btn btn-primary" style="width:100%;height:44px" onclick="saveAvailability()">Save Availability</button>
+      </div>
+    </section>
     <section><h2>Closed Leads</h2><div class="lead-list" id="closed"></div></section>
     <section>
       <h2>Pilot Tracker</h2>
@@ -276,13 +305,18 @@
   </div>
 </div>
 
-<!-- Book Request sheet (from Requests tab — includes time window) -->
+<!-- Book Request sheet (from Requests tab — includes time window + availability check) -->
 <div class="sheet-overlay" id="sheet-book-request">
   <div class="sheet"><div class="sheet-handle"></div>
     <h3>Book Request</h3>
     <input type="hidden" id="breq-id">
     <div id="breq-summary" style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:13px;color:var(--muted);line-height:1.6"></div>
-    <div class="form-group"><label>Scheduled Date *</label><input id="breq-date" type="date"></div>
+    <div class="form-group">
+      <label>Scheduled Date *</label>
+      <input id="breq-date" type="date" oninput="checkBreqAvailability()">
+      <div class="avail-warn" id="breq-avail-warn"></div>
+      <div class="avail-ok" id="breq-avail-ok"></div>
+    </div>
     <div class="form-group">
       <label>Scheduled Time Window (optional)</label>
       <select id="breq-window" style="height:48px">
@@ -293,8 +327,9 @@
         <option value="flexible">Flexible</option>
       </select>
     </div>
+    <div id="breq-next-avail" style="font-size:12px;color:var(--muted);margin-bottom:8px;display:none"></div>
     <div class="err" id="breq-err"></div>
-    <button class="sheet-primary-btn" onclick="submitBookRequest()">Confirm Booking</button>
+    <button class="sheet-primary-btn" id="breq-submit-btn" onclick="submitBookRequest()">Confirm Booking</button>
     <button class="btn" style="width:100%;margin-top:8px" onclick="closeSheet('sheet-book-request')">Cancel</button>
   </div>
 </div>
@@ -460,7 +495,7 @@ function switchTab(name){
   if(stale){
     if(name==='today'||name==='pipeline'||name==='reminders')load();
     if(name==='requests')loadRequests();
-    if(name==='more'){loadClosed();loadPilot();loadUsage();}
+    if(name==='more'){loadClosed();loadPilot();loadUsage();loadAvailability();}
     _lastLoaded[name]=now;
   }
 }
@@ -1077,6 +1112,122 @@ async function pilotAction(id,action){
 }
 
 // ---------------------------------------------------------------------------
+// Availability settings
+// ---------------------------------------------------------------------------
+
+const AVAIL_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+let _availState={allowed_weekdays:[0,1,2,3,4],blocked_dates:[]};
+
+async function loadAvailability(){
+  const loadEl=document.getElementById('avail-loading');
+  const formEl=document.getElementById('avail-form');
+  try{
+    const d=await fetch('/api/availability').then(r=>r.json());
+    if(d.error){if(loadEl)loadEl.textContent='Error: '+d.error;return;}
+    _availState=d;
+    renderAvailForm(d);
+    if(loadEl)loadEl.style.display='none';
+    if(formEl)formEl.style.display='';
+  }catch(e){
+    if(loadEl)loadEl.textContent='Could not load availability.';
+  }
+}
+
+function renderAvailForm(avail){
+  // Day grid
+  const grid=document.getElementById('avail-day-grid');
+  if(!grid)return;
+  grid.innerHTML=AVAIL_DAYS.map(function(name,i){
+    const on=(avail.allowed_weekdays||[]).includes(i);
+    return '<button class="avail-day-btn'+(on?' on':'')+'" data-day="'+i+'" onclick="toggleAvailDay('+i+',this)">'+name+'</button>';
+  }).join('');
+  // Blocked dates
+  renderBlockedList(avail.blocked_dates||[]);
+}
+
+function toggleAvailDay(day,el){
+  const wd=_availState.allowed_weekdays;
+  const idx=wd.indexOf(day);
+  if(idx>=0){wd.splice(idx,1);el.classList.remove('on');}
+  else{wd.push(day);el.classList.add('on');}
+}
+
+function renderBlockedList(dates){
+  _availState.blocked_dates=dates;
+  const el=document.getElementById('avail-blocked-list');
+  if(!el)return;
+  if(!dates.length){el.innerHTML='<div style="font-size:12px;color:var(--muted);padding:4px 0">No blocked dates.</div>';return;}
+  el.innerHTML=dates.map(function(d){
+    return '<div class="avail-blocked-item"><span>'+esc(d)+'</span>'
+      +'<button class="avail-blocked-remove" onclick="removeBlockedDate(\''+d+'\')">&times;</button></div>';
+  }).join('');
+}
+
+function addBlockedDate(){
+  const inp=document.getElementById('avail-block-input');
+  const val=(inp.value||'').trim();
+  if(!val||!validDate(val)){toast('Enter a valid date.',true);return;}
+  if(_availState.blocked_dates.includes(val)){toast('Already blocked.',true);inp.value='';return;}
+  _availState.blocked_dates=[...new Set([..._availState.blocked_dates,val])].sort();
+  renderBlockedList(_availState.blocked_dates);
+  inp.value='';
+}
+
+function removeBlockedDate(d){
+  _availState.blocked_dates=_availState.blocked_dates.filter(function(x){return x!==d;});
+  renderBlockedList(_availState.blocked_dates);
+}
+
+async function saveAvailability(){
+  const statusEl=document.getElementById('avail-save-status');
+  try{
+    const r=await fetch('/api/availability',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({allowed_weekdays:_availState.allowed_weekdays,blocked_dates:_availState.blocked_dates})
+    });
+    const j=await r.json();
+    if(!r.ok){toast(j.error||'Error saving.',true);return;}
+    toast('Availability saved \u2713');
+    if(statusEl){statusEl.textContent='Saved \u2713';statusEl.style.display='';setTimeout(()=>{statusEl.style.display='none';},3000);}
+  }catch(e){toast('Error saving.',true);}
+}
+
+// ---------------------------------------------------------------------------
+// Availability check in booking sheet
+// ---------------------------------------------------------------------------
+
+let _breqAvailChecking=false;
+async function checkBreqAvailability(){
+  const dateVal=document.getElementById('breq-date').value;
+  const warnEl=document.getElementById('breq-avail-warn');
+  const okEl=document.getElementById('breq-avail-ok');
+  const nextEl=document.getElementById('breq-next-avail');
+  if(!warnEl||!okEl||!nextEl)return;
+  warnEl.style.display='none';
+  okEl.style.display='none';
+  nextEl.style.display='none';
+  if(!dateVal||!validDate(dateVal))return;
+  if(_breqAvailChecking)return;
+  _breqAvailChecking=true;
+  try{
+    const d=await fetch('/api/availability/check?date='+encodeURIComponent(dateVal)).then(r=>r.json());
+    if(d.ok){
+      okEl.textContent='\u2714 Available';
+      okEl.style.display='';
+    } else {
+      warnEl.textContent='\u26a0 '+d.reason+(d.next_available?' Next available: '+d.next_available:'');
+      warnEl.style.display='';
+      if(d.next_available){
+        nextEl.innerHTML='Use <a href="#" onclick="document.getElementById(\'breq-date\').value=\''+d.next_available+'\';checkBreqAvailability();return false;" style="color:var(--accent)">'+d.next_available+'</a> instead?';
+        nextEl.style.display='';
+      }
+    }
+  }catch(e){/* silent — availability check is best-effort */}
+  finally{_breqAvailChecking=false;}
+}
+
+// ---------------------------------------------------------------------------
 // Requests tab
 // ---------------------------------------------------------------------------
 
@@ -1155,6 +1306,10 @@ function openBookRequest(r){
   document.getElementById('breq-date').value=r.requested_date||'';
   document.getElementById('breq-window').value=r.requested_time_window||'';
   document.getElementById('breq-err').style.display='none';
+  // Reset availability indicators
+  ['breq-avail-warn','breq-avail-ok','breq-next-avail'].forEach(function(id){
+    const el=document.getElementById(id);if(el)el.style.display='none';
+  });
   // Populate summary
   const parts=[];
   if(r.service)parts.push('🔧 '+esc(r.service));
@@ -1165,6 +1320,8 @@ function openBookRequest(r){
 '+parts.join('
 ');
   openSheet('sheet-book-request');
+  // Auto-check availability if customer provided a preferred date
+  if(r.requested_date)checkBreqAvailability();
 }
 
 async function submitBookRequest(){

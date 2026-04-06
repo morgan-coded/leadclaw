@@ -170,6 +170,16 @@ def init_db():
             if "already exists" not in str(e).lower():
                 raise
 
+        # --- Availability settings table ---
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS availability (
+                user_id       INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                allowed_weekdays TEXT NOT NULL DEFAULT '[0,1,2,3,4]',
+                blocked_dates    TEXT NOT NULL DEFAULT '[]',
+                updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        """)
+
         # --- Event log table for pilot usage tracking ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS event_log (
