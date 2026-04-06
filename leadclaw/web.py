@@ -470,17 +470,22 @@ def _send_new_request_notification(lead: dict):
         if resend_key:
             import urllib.request as _ureq
 
-            payload = _json.dumps({
-                "from": "LeadClaw <noreply@morganlabs.org>",
-                "to": [owner_email],
-                "subject": subject,
-                "text": body,
-            }).encode()
+            payload = _json.dumps(
+                {
+                    "from": "LeadClaw <noreply@morganlabs.org>",
+                    "to": [owner_email],
+                    "subject": subject,
+                    "text": body,
+                }
+            ).encode()
             req = _ureq.Request(
                 "https://api.resend.com/emails",
                 data=payload,
                 method="POST",
-                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {resend_key}",
+                    "Content-Type": "application/json",
+                },
             )
             try:
                 _ureq.urlopen(req, timeout=8)
@@ -509,7 +514,9 @@ def _send_new_request_notification(lead: dict):
             return
 
         # Dev fallback — print to stderr
-        print(f"[NOTIFY] New request from {name} ({service}) — {phone} — {address}", file=sys.stderr)
+        print(
+            f"[NOTIFY] New request from {name} ({service}) — {phone} — {address}", file=sys.stderr
+        )
     except Exception as exc:
         print(f"[NOTIFY] Failed to send owner notification: {exc}", file=sys.stderr)
 
@@ -606,11 +613,17 @@ def public_request():
         user_id=1,
     )
 
-    _send_new_request_notification({
-        "name": name, "service": service, "phone": phone,
-        "service_address": service_address, "requested_date": requested_date,
-        "requested_time_window": requested_time_window, "notes": notes,
-    })
+    _send_new_request_notification(
+        {
+            "name": name,
+            "service": service,
+            "phone": phone,
+            "service_address": service_address,
+            "requested_date": requested_date,
+            "requested_time_window": requested_time_window,
+            "notes": notes,
+        }
+    )
 
     return render_template_string(_REQUEST_SUCCESS_HTML, name=name, avail_warning=avail_warning)
 
@@ -1123,7 +1136,12 @@ def api_book_lead(lead_id):
     _VALID_WINDOWS = {"morning", "afternoon", "evening", "flexible"}
     if scheduled_time_window and scheduled_time_window not in _VALID_WINDOWS:
         scheduled_time_window = None
-    mark_booked(lead_id, scheduled_date, scheduled_time_window=scheduled_time_window, user_id=current_user.id)
+    mark_booked(
+        lead_id,
+        scheduled_date,
+        scheduled_time_window=scheduled_time_window,
+        user_id=current_user.id,
+    )
     return jsonify({"ok": True})
 
 

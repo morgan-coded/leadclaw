@@ -122,6 +122,7 @@ def test_filter_lost_not_in_unbooked():
 
 def test_user_id_scoping():
     from leadclaw.db import get_conn
+
     # Create user 2 so FK constraint passes
     with get_conn() as conn:
         conn.execute(

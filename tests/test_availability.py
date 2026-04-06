@@ -76,13 +76,17 @@ def test_set_ignores_invalid_weekday_values():
 
 
 def test_set_ignores_invalid_blocked_dates():
-    set_availability(user_id=1, allowed_weekdays=[0, 1, 2, 3, 4], blocked_dates=["not-a-date", "2026-06-15"])
+    set_availability(
+        user_id=1, allowed_weekdays=[0, 1, 2, 3, 4], blocked_dates=["not-a-date", "2026-06-15"]
+    )
     avail = get_availability(user_id=1)
     assert avail["blocked_dates"] == ["2026-06-15"]
 
 
 def test_set_deduplicates_blocked_dates():
-    set_availability(user_id=1, allowed_weekdays=[0, 1, 2, 3, 4], blocked_dates=["2026-06-15", "2026-06-15"])
+    set_availability(
+        user_id=1, allowed_weekdays=[0, 1, 2, 3, 4], blocked_dates=["2026-06-15", "2026-06-15"]
+    )
     avail = get_availability(user_id=1)
     assert avail["blocked_dates"].count("2026-06-15") == 1
 

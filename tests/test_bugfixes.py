@@ -75,9 +75,15 @@ def test_send_notification_resend_path_uses_alias(monkeypatch):
         with patch("urllib.request.Request", mock_req_class):
             # Should not raise NameError
             web_mod._send_new_request_notification(
-                {"name": "Test User", "service": "Lawn Mowing", "phone": "555-1234",
-                 "service_address": "123 Main", "requested_date": None,
-                 "requested_time_window": None, "notes": None}
+                {
+                    "name": "Test User",
+                    "service": "Lawn Mowing",
+                    "phone": "555-1234",
+                    "service_address": "123 Main",
+                    "requested_date": None,
+                    "requested_time_window": None,
+                    "notes": None,
+                }
             )
     # Either the mock was called or an HTTP error was caught — the key is no NameError raised
 
@@ -92,9 +98,15 @@ def test_send_notification_no_owner_email_skips_silently(monkeypatch, capsys):
 
     # Should not raise
     web_mod._send_new_request_notification(
-        {"name": "Test", "service": "Gutters", "phone": "555-0000",
-         "service_address": "456 Elm", "requested_date": None,
-         "requested_time_window": None, "notes": None}
+        {
+            "name": "Test",
+            "service": "Gutters",
+            "phone": "555-0000",
+            "service_address": "456 Elm",
+            "requested_date": None,
+            "requested_time_window": None,
+            "notes": None,
+        }
     )
 
 
@@ -107,9 +119,15 @@ def test_send_notification_dev_fallback_stderr(monkeypatch, capsys):
     monkeypatch.delenv("SMTP_HOST", raising=False)
 
     web_mod._send_new_request_notification(
-        {"name": "Dev User", "service": "Cleanup", "phone": "555-9999",
-         "service_address": "789 Oak", "requested_date": None,
-         "requested_time_window": None, "notes": None}
+        {
+            "name": "Dev User",
+            "service": "Cleanup",
+            "phone": "555-9999",
+            "service_address": "789 Oak",
+            "requested_date": None,
+            "requested_time_window": None,
+            "notes": None,
+        }
     )
     captured = capsys.readouterr()
     assert "Dev User" in captured.err or "NOTIFY" in captured.err
@@ -320,7 +338,7 @@ def test_manifest_no_broken_icons():
     for icon in data.get("icons", []):
         src = icon.get("src", "")
         if src.startswith("/static/"):
-            fname = src[len("/static/"):]
+            fname = src[len("/static/") :]
             full = os.path.join(static_dir, fname)
             assert os.path.exists(full), f"Manifest references missing icon: {src}"
 

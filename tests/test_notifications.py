@@ -202,6 +202,7 @@ def test_unbooked_unseen_request_visible_before_booking():
 
 def test_unseen_requests_scoped_by_user():
     from leadclaw.db import get_conn
+
     with get_conn() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO users (id, email, password_hash, email_verified)"
