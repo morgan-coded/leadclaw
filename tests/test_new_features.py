@@ -418,12 +418,13 @@ def test_web_dismiss_invalid_type():
 
 
 def test_web_usage_endpoint():
-    """GET /api/usage should return event counts."""
+    """GET /api/usage should return event counts scoped to current user."""
     client = _make_auth_client()
-    # Log some events
+    uid = client._test_user_id
+    # Log events for the authenticated user
     with get_conn() as conn:
-        log_event(conn, "quote_sent", user_id=1)
-        log_event(conn, "lead_paid", user_id=1)
+        log_event(conn, "quote_sent", user_id=uid)
+        log_event(conn, "lead_paid", user_id=uid)
 
     r = client.get("/api/usage")
     assert r.status_code == 200

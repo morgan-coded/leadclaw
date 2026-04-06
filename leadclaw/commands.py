@@ -122,7 +122,7 @@ def print_pipeline_summary(summary, totals):
         val = f"  (${row['total_quoted']:,.0f})" if row["total_quoted"] else ""
         print(f"  {label}: {row['count']}{val}")
     print(f"\n  Open pipeline:  ${totals['open_value']:,.0f}")
-    print(f"  Won (closed):   ${totals['won_value']:,.0f}")
+    print(f"  Paid (closed):  ${totals['won_value']:,.0f}")
     print(f"  Lost (closed):  ${totals['lost_value']:,.0f}")
 
 

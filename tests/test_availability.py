@@ -180,10 +180,12 @@ def test_next_available_date_available_day_returns_same():
     assert result == "2026-04-13"
 
 
-def test_next_available_date_no_allowed_days_returns_none():
+def test_next_available_date_empty_weekdays_all_days_available():
+    """Empty allowed_weekdays = all days available (consistent with check_date safety net)."""
     avail = {"allowed_weekdays": [], "blocked_dates": []}
     result = next_available_date(avail, from_date="2026-04-13")
-    assert result is None
+    # 2026-04-13 is Monday — should be returned immediately since all days are available
+    assert result == "2026-04-13"
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,7 @@ from leadclaw.queries import (
     dismiss_reminder_standalone,
     get_all_active_leads,
     get_all_leads,
+    get_closed_leads,
     get_event_counts,
     get_invoice_reminders,
     get_job_today_leads,
@@ -477,14 +478,14 @@ def _send_new_request_notification(lead: dict):
                 "subject": subject,
                 "text": body,
             }).encode()
-            req = urllib.request.Request(
+            req = _ureq.Request(
                 "https://api.resend.com/emails",
                 data=payload,
                 method="POST",
                 headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
             )
             try:
-                urllib.request.urlopen(req, timeout=8)
+                _ureq.urlopen(req, timeout=8)
                 print(f"[NOTIFY] New request alert sent to {owner_email}", file=sys.stderr)
                 return
             except Exception as exc:
@@ -534,15 +535,25 @@ def public_request():
     requested_time_window = (request.form.get("requested_time_window") or "").strip() or None
     notes = (request.form.get("notes") or "").strip() or None
 
+    _MAX_PHONE = 20
+
     errors = []
     if not name:
         errors.append("Name is required.")
+    elif len(name) > MAX_NAME_LENGTH:
+        errors.append(f"Name must be {MAX_NAME_LENGTH} characters or fewer.")
     if not phone:
         errors.append("Phone number is required.")
+    elif len(phone) > _MAX_PHONE:
+        errors.append(f"Phone number must be {_MAX_PHONE} characters or fewer.")
     if not service or service not in _REQUEST_SERVICES:
         errors.append("Please select a valid service.")
     if not service_address:
         errors.append("Service address is required.")
+    elif len(service_address) > MAX_FIELD_LENGTH:
+        errors.append(f"Service address must be {MAX_FIELD_LENGTH} characters or fewer.")
+    if notes and len(notes) > MAX_FIELD_LENGTH:
+        errors.append(f"Notes must be {MAX_FIELD_LENGTH} characters or fewer.")
     if email and not _valid_email(email):
         errors.append("Enter a valid email address.")
     if requested_date and not _valid_date(requested_date):
@@ -727,11 +738,15 @@ def _lead_to_dict(row) -> dict:
         except (IndexError, KeyError):
             return default
 
+    # Normalize legacy 'won' status to 'paid' for API consumers
+    raw_status = row["status"]
+    status = "paid" if raw_status == "won" else raw_status
+
     return {
         "id": row["id"],
         "name": row["name"],
         "service": row["service"],
-        "status": row["status"],
+        "status": status,
         "phone": row["phone"],
         "email": row["email"],
         "quote_amount": row["quote_amount"],
@@ -822,15 +837,13 @@ def api_summary(user_id: int) -> dict:
 
 
 def api_closed(user_id: int) -> dict:
-    all_leads = get_all_leads(limit=10000, user_id=user_id)
-    # Treat 'won' as 'paid' for display purposes
-    closed = [_lead_to_dict(r) for r in all_leads if r["status"] in ("won", "lost", "paid")]
-    return {"closed": closed}
+    rows = get_closed_leads(user_id=user_id)
+    return {"closed": [_lead_to_dict(r) for r in rows]}
 
 
-def api_usage() -> dict:
-    last30 = get_event_counts(days=30)
-    alltime = get_event_counts()
+def api_usage(user_id: int) -> dict:
+    last30 = get_event_counts(days=30, user_id=user_id)
+    alltime = get_event_counts(user_id=user_id)
     return {
         "last_30_days": [{"event_type": r["event_type"], "count": r["count"]} for r in last30],
         "all_time": [{"event_type": r["event_type"], "count": r["count"]} for r in alltime],
@@ -884,10 +897,7 @@ def manifest():
             "display": "standalone",
             "background_color": "#0f1117",
             "theme_color": "#6366f1",
-            "icons": [
-                {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
-                {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
-            ],
+            "icons": [],
         }
     )
 
@@ -1322,7 +1332,7 @@ def api_dismiss_reminder():
 @verified_required
 def route_api_usage():
     try:
-        return jsonify(api_usage())
+        return jsonify(api_usage(current_user.id))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
