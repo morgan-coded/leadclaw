@@ -53,7 +53,7 @@ def get_stale_leads(user_id: Optional[int] = None):
                 """
                 SELECT * FROM leads
                 WHERE status NOT IN ('won', 'lost')
-                  AND follow_up_after < datetime('now')
+                  AND date(follow_up_after) < date('now')
                   AND user_id = ?
                 ORDER BY follow_up_after ASC
                 """,
@@ -64,7 +64,7 @@ def get_stale_leads(user_id: Optional[int] = None):
                 """
                 SELECT * FROM leads
                 WHERE status NOT IN ('won', 'lost')
-                  AND follow_up_after < datetime('now')
+                  AND date(follow_up_after) < date('now')
                 ORDER BY follow_up_after ASC
                 """
             ).fetchall()
@@ -395,7 +395,7 @@ def mark_stale_leads_followup_due() -> int:
             UPDATE leads
             SET status = 'followup_due'
             WHERE status IN ('new', 'quoted')
-              AND follow_up_after < datetime('now')
+              AND date(follow_up_after) < date('now')
             """
         )
         return cur.rowcount
