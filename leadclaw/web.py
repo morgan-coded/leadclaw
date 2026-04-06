@@ -550,9 +550,9 @@ def api_closed(user_id: int) -> dict:
     return {"closed": closed}
 
 
-def api_usage() -> dict:
-    last30 = get_event_counts(days=30)
-    alltime = get_event_counts()
+def api_usage(user_id: int) -> dict:
+    last30 = get_event_counts(days=30, user_id=user_id)
+    alltime = get_event_counts(user_id=user_id)
     return {
         "last_30_days": [{"event_type": r["event_type"], "count": r["count"]} for r in last30],
         "all_time": [{"event_type": r["event_type"], "count": r["count"]} for r in alltime],
@@ -1961,7 +1961,7 @@ def api_dismiss_reminder():
 @verified_required
 def route_api_usage():
     try:
-        return jsonify(api_usage())
+        return jsonify(api_usage(current_user.id))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

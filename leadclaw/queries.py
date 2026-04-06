@@ -330,28 +330,32 @@ def log_event(
     )
 
 
-def get_event_counts(days: Optional[int] = None) -> list:
+def get_event_counts(days: Optional[int] = None, user_id: Optional[int] = None) -> list:
     """Return event counts by type. Pass days=30 for last 30 days, None for all-time."""
+    uid_clause = "AND user_id = ?" if user_id is not None else ""
+    uid_params = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         if days is not None:
             rows = conn.execute(
-                """
+                f"""
                 SELECT event_type, COUNT(*) as count
                 FROM event_log
-                WHERE date(created_at) >= date('now', ? || ' days')
+                WHERE date(created_at) >= date('now', ? || ' days') {uid_clause}
                 GROUP BY event_type
                 ORDER BY count DESC
                 """,
-                (f"-{days}",),
+                (f"-{days}", *uid_params),
             ).fetchall()
         else:
             rows = conn.execute(
-                """
+                f"""
                 SELECT event_type, COUNT(*) as count
                 FROM event_log
+                WHERE 1=1 {uid_clause}
                 GROUP BY event_type
                 ORDER BY count DESC
-                """
+                """,
+                uid_params,
             ).fetchall()
     return rows
 
@@ -424,7 +428,7 @@ def mark_lost(
         )
 
 
-def import_leads_from_rows(rows: list) -> dict:
+def import_leads_from_rows(rows: list, user_id: int = 1) -> dict:
     """
     Bulk-insert leads from a list of dicts (pre-validated CSV rows).
     Returns {imported, skipped, errors} summary.
@@ -449,10 +453,27 @@ def import_leads_from_rows(rows: list) -> dict:
                 followup_days = DEFAULT_FOLLOWUP_DAYS
         except (ValueError, TypeError):
             followup_days = DEFAULT_FOLLOWUP_DAYS
+        quote_amount = None
+        raw_quote = (row.get("quote_amount") or "").strip()
+        if raw_quote:
+            try:
+                quote_amount = float(raw_quote)
+                if quote_amount <= 0:
+                    quote_amount = None
+            except (ValueError, TypeError):
+                pass
         try:
-            add_lead(
-                name, service, phone=phone, email=email, notes=notes, followup_days=followup_days
+            lead_id, _ = add_lead(
+                name,
+                service,
+                phone=phone,
+                email=email,
+                notes=notes,
+                followup_days=followup_days,
+                user_id=user_id,
             )
+            if quote_amount is not None:
+                update_quote(lead_id, quote_amount, followup_days=followup_days)
             imported += 1
         except Exception as e:  # noqa: BLE001
             errors.append(f"Row {i + 1} ({name}): {e}")
@@ -461,16 +482,24 @@ def import_leads_from_rows(rows: list) -> dict:
     return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
-def mark_stale_leads_followup_due() -> int:
-    """Auto-promote overdue new/quoted leads to followup_due. Returns count updated."""
+def mark_stale_leads_followup_due(user_id: Optional[int] = None) -> int:
+    """Auto-promote overdue new/quoted leads to followup_due. Returns count updated.
+
+    Pass user_id to scope to a single tenant (web/per-user scheduler use).
+    Omit (None) for global promotion — CLI digest and single-tenant installs.
+    """
+    uid_clause = "AND user_id = ?" if user_id is not None else ""
+    uid_params = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         cur = conn.execute(
-            """
+            f"""
             UPDATE leads
             SET status = 'followup_due'
             WHERE status IN ('new', 'quoted')
               AND date(follow_up_after) < date('now')
-            """
+              {uid_clause}
+            """,
+            uid_params,
         )
         return cur.rowcount
 
