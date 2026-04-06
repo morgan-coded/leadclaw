@@ -849,3 +849,109 @@ class TestPublicRequest:
         """No regression — protected routes still 401/redirect without login."""
         r = client.get("/api/summary", follow_redirects=False)
         assert r.status_code in (302, 401)
+
+
+# ---------------------------------------------------------------------------
+# Anti-spam tests for /request
+# ---------------------------------------------------------------------------
+
+class TestPublicRequestAntiSpam:
+    """Tests for honeypot, min-time, and rate-limit protections on /request."""
+
+    _VALID = {
+        "name": "Spam Test User",
+        "phone": "512-555-9999",
+        "service": "Lawn Mowing",
+        "service_address": "999 Test St, Austin TX",
+    }
+
+    def test_honeypot_filled_returns_success_without_storing(self, client):
+        """If honeypot field is filled, silently return success but don't save lead."""
+        import sqlite3
+        data = {**self._VALID, "_hp_website": "http://spam.example.com"}
+        r = client.post("/request", data=data, follow_redirects=True)
+        # Should silently "succeed" (no error to tip off bots)
+        assert r.status_code == 200
+        # No lead should be saved
+        conn = sqlite3.connect(os.environ["LEADCLAW_DB"])
+        row = conn.execute(
+            "SELECT * FROM leads WHERE name = ?", ("Spam Test User",)
+        ).fetchone()
+        conn.close()
+        assert row is None
+
+    def test_honeypot_empty_allows_submission(self, client):
+        """Normal submission with no honeypot field succeeds."""
+        data = {**self._VALID, "_hp_website": ""}
+        r = client.post("/request", data=data, follow_redirects=True)
+        assert r.status_code == 200
+        assert b"Request Received" in r.data
+
+    def test_form_includes_honeypot_field(self, client):
+        """GET /request should include the hidden honeypot input."""
+        r = client.get("/request")
+        assert r.status_code == 200
+        assert b"_hp_website" in r.data
+
+    def test_form_includes_timestamp_field(self, client):
+        """GET /request should include the hidden timestamp field."""
+        r = client.get("/request")
+        assert b"_form_ts" in r.data
+
+    def test_min_time_check_rejects_instant_submission(self, client):
+        """Submission with _form_ts set to 'now' (elapsed < 3s) should be rejected."""
+        import time
+        data = {**self._VALID, "_form_ts": str(int(time.time()))}
+        r = client.post("/request", data=data)
+        # Should return an error (422 or re-render form with error message)
+        assert r.status_code in (200, 422)
+        assert b"Please take a moment" in r.data
+
+    def test_min_time_check_allows_old_timestamp(self, client):
+        """Submission with _form_ts set to 10 seconds ago should be allowed."""
+        import time
+        data = {**self._VALID, "_form_ts": str(int(time.time()) - 10)}
+        r = client.post("/request", data=data, follow_redirects=True)
+        assert r.status_code == 200
+        assert b"Request Received" in r.data
+
+    def test_missing_timestamp_does_not_block(self, client):
+        """Submissions with no _form_ts should pass (don't break old behavior)."""
+        data = {**self._VALID}  # no _form_ts key at all
+        r = client.post("/request", data=data, follow_redirects=True)
+        assert r.status_code == 200
+        assert b"Request Received" in r.data
+
+    def test_rate_limit_blocks_after_threshold(self, client):
+        """Same IP submitting more than the limit in one window gets a 429."""
+        import time
+        from leadclaw.web import _REQUEST_THROTTLE, _REQUEST_THROTTLE_LIMIT
+
+        # Clear any existing throttle state for this IP
+        _REQUEST_THROTTLE.clear()
+
+        old_ts = str(int(time.time()) - 10)  # pass min-time check
+
+        # Submit up to the limit
+        for _ in range(_REQUEST_THROTTLE_LIMIT):
+            data = {**self._VALID, "_form_ts": old_ts}
+            r = client.post("/request", data=data, follow_redirects=True)
+            assert r.status_code == 200
+
+        # Next submission should be throttled
+        data = {**self._VALID, "_form_ts": old_ts}
+        r = client.post("/request", data=data)
+        assert r.status_code == 429
+
+    def test_rate_limit_does_not_block_under_threshold(self, client):
+        """Submissions under the rate limit should always succeed."""
+        import time
+        from leadclaw.web import _REQUEST_THROTTLE, _REQUEST_THROTTLE_LIMIT
+
+        _REQUEST_THROTTLE.clear()
+
+        old_ts = str(int(time.time()) - 10)
+        for i in range(_REQUEST_THROTTLE_LIMIT - 1):
+            data = {**self._VALID, "name": f"User{i}", "_form_ts": old_ts}
+            r = client.post("/request", data=data, follow_redirects=True)
+            assert r.status_code == 200

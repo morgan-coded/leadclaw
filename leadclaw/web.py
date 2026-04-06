@@ -17,11 +17,17 @@ Environment variables:
     LEADCLAW_DB          - DB path (default: data/leads.db)
     PORT                 - Bind port (default: 7432)
     HOST                 - Bind host (default: 127.0.0.1)
-    SMTP_HOST            - SMTP server (omit to use stdout link in dev)
+    APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
+
+Email / notification env vars (swap these when domain is ready):
+    RESEND_API_KEY       - Resend API key (preferred; takes priority over SMTP)
+    NOTIFY_FROM_EMAIL    - Sender address, e.g. 'LeadClaw <hello@yourdomain.com>'
+                           Defaults to 'LeadClaw <noreply@morganlabs.org>' if unset
+    OWNER_NOTIFY_EMAIL   - Where new-request alerts go (required for notifications)
+    SMTP_HOST            - SMTP server (used if no RESEND_API_KEY)
     SMTP_PORT            - SMTP port (default: 587)
     SMTP_USER            - SMTP username
     SMTP_PASS            - SMTP password
-    APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
 """
 
 import html as _html
@@ -30,6 +36,8 @@ import os
 import secrets
 import smtplib
 import sys
+import time
+from collections import defaultdict
 from datetime import datetime
 from email.mime.text import MIMEText
 
@@ -98,6 +106,42 @@ from leadclaw.queries import (
     update_lead,
     update_quote,
 )
+
+# ---------------------------------------------------------------------------
+# Configurable sender address (swap via NOTIFY_FROM_EMAIL env var)
+# ---------------------------------------------------------------------------
+
+
+def _notify_from_email() -> str:
+    """Return the From: address for outgoing emails.
+    Set NOTIFY_FROM_EMAIL='LeadClaw <hello@yourdomain.com>' to override.
+    """
+    return os.environ.get("NOTIFY_FROM_EMAIL", "LeadClaw <noreply@morganlabs.org>")
+
+
+# ---------------------------------------------------------------------------
+# Anti-spam: per-IP rate limiting for /request
+# In-memory only — resets on restart. Good enough for low-volume pilot use.
+# ---------------------------------------------------------------------------
+
+_REQUEST_THROTTLE: dict = defaultdict(list)  # ip -> [timestamp, ...]
+_REQUEST_THROTTLE_LIMIT = 5   # max submissions per window
+_REQUEST_THROTTLE_WINDOW = 3600  # 1 hour in seconds
+_REQUEST_MIN_SECONDS = 3  # minimum seconds to fill out the form
+
+
+def _is_throttled(ip: str) -> bool:
+    """Return True if this IP has exceeded the rate limit."""
+    now = time.time()
+    cutoff = now - _REQUEST_THROTTLE_WINDOW
+    _REQUEST_THROTTLE[ip] = [t for t in _REQUEST_THROTTLE[ip] if t > cutoff]
+    return len(_REQUEST_THROTTLE[ip]) >= _REQUEST_THROTTLE_LIMIT
+
+
+def _record_submission(ip: str):
+    """Record a successful submission for this IP."""
+    _REQUEST_THROTTLE[ip].append(time.time())
+
 
 # ---------------------------------------------------------------------------
 # Flask app setup
@@ -182,7 +226,7 @@ def _send_verification_email(to_email: str, token: str):
 
         payload = _json.dumps(
             {
-                "from": "LeadClaw <noreply@morganlabs.org>",
+                "from": _notify_from_email(),
                 "to": [to_email],
                 "subject": "Verify your LeadClaw account",
                 "text": (
@@ -409,6 +453,11 @@ _REQUEST_FORM_HTML = (
     "</select></div>"
     "<div class='form-group'><label>Notes (optional)</label>"
     "<textarea name='notes' placeholder='Any extra details...'>{{ notes|default(\"\") }}</textarea></div>"
+    # Hidden timestamp for min-time anti-spam
+    "<input type='hidden' name='_form_ts' value='{{ form_ts|default("") }}'>"
+    # Honeypot: hidden from real users, bots fill it in
+    "<div style='display:none' aria-hidden='true'><label>Website</label>"
+    "<input type='text' name='_hp_website' autocomplete='off' tabindex='-1'></div>"
     "<button class='btn' type='submit'>Submit Request</button>"
     "</form>"
     "</div></body></html>"
@@ -472,7 +521,7 @@ def _send_new_request_notification(lead: dict):
 
             payload = _json.dumps(
                 {
-                    "from": "LeadClaw <noreply@morganlabs.org>",
+                    "from": _notify_from_email(),
                     "to": [owner_email],
                     "subject": subject,
                     "text": body,
@@ -525,11 +574,43 @@ def _send_new_request_notification(lead: dict):
 def public_request():
     """Public service request form. No auth required. Creates a lead on submit."""
     if request.method == "GET":
+        # Embed submission timestamp in form for min-time check
+        form_ts = str(int(time.time()))
         return render_template_string(
             _REQUEST_FORM_HTML,
             services=_REQUEST_SERVICES,
             time_windows=_REQUEST_TIME_WINDOWS,
+            form_ts=form_ts,
         )
+
+    # --- Anti-spam checks ---
+    # 1. Honeypot: if the hidden field is filled, silently discard
+    if request.form.get("_hp_website", ""):
+        return render_template_string(_REQUEST_SUCCESS_HTML, name="there", avail_warning=None)
+
+    # 2. Minimum time check
+    try:
+        form_ts = int(request.form.get("_form_ts", "0") or "0")
+        elapsed = time.time() - form_ts
+        if form_ts > 0 and elapsed < _REQUEST_MIN_SECONDS:
+            return render_template_string(
+                _REQUEST_FORM_HTML,
+                error="Please take a moment to fill out the form.",
+                services=_REQUEST_SERVICES,
+                time_windows=_REQUEST_TIME_WINDOWS,
+            )
+    except (ValueError, TypeError):
+        pass
+
+    # 3. Per-IP rate limit
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    if _is_throttled(client_ip):
+        return render_template_string(
+            _REQUEST_FORM_HTML,
+            error="Too many requests. Please try again later.",
+            services=_REQUEST_SERVICES,
+            time_windows=_REQUEST_TIME_WINDOWS,
+        ), 429
 
     name = (request.form.get("name") or "").strip()
     phone = (request.form.get("phone") or "").strip()
@@ -624,6 +705,9 @@ def public_request():
             "notes": notes,
         }
     )
+
+    # Record submission for rate-limit tracking
+    _record_submission(client_ip)
 
     return render_template_string(_REQUEST_SUCCESS_HTML, name=name, avail_warning=avail_warning)
 
