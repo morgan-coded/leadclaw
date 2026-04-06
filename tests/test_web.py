@@ -858,6 +858,14 @@ class TestPublicRequest:
 class TestPublicRequestAntiSpam:
     """Tests for honeypot, min-time, and rate-limit protections on /request."""
 
+    @pytest.fixture(autouse=True)
+    def clear_throttle(self):
+        """Reset rate-limit state before/after each test to prevent cross-test pollution."""
+        from leadclaw.web import _REQUEST_THROTTLE
+        _REQUEST_THROTTLE.clear()
+        yield
+        _REQUEST_THROTTLE.clear()
+
     _VALID = {
         "name": "Spam Test User",
         "phone": "512-555-9999",
