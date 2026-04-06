@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from leadclaw import db, queries
+from leadclaw import queries
 from leadclaw.commands import (
     build_parser,
     cmd_digest,
@@ -19,18 +19,6 @@ from leadclaw.commands import (
     print_pipeline_summary,
     resolve_lead,
 )
-from tests.conftest import TEST_DB
-
-
-@pytest.fixture(autouse=True)
-def fresh_db():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-    db.init_db()
-    yield
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-
 
 # ---------------------------------------------------------------------------
 # Parser tests

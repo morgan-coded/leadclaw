@@ -6,28 +6,16 @@ Auth is bypassed by creating a user and logging in through the test client.
 """
 
 import json
-import os
 
 import pytest
 
 from leadclaw import db, queries
 from leadclaw.config import MAX_NAME_LENGTH
 from leadclaw.web import DASHBOARD_HTML, api_closed, api_summary, app
-from tests.conftest import TEST_DB
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def fresh_db():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-    db.init_db()
-    yield
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
 
 
 @pytest.fixture

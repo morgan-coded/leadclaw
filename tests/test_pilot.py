@@ -2,24 +2,9 @@
 tests/test_pilot.py - Pilot candidate tracker tests
 """
 
-import os
-
 import pytest
 
-from leadclaw import db
 from leadclaw import pilot as p
-from tests.conftest import TEST_DB
-
-
-@pytest.fixture(autouse=True)
-def fresh_db():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-    db.init_db()
-    yield
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-
 
 # ---------------------------------------------------------------------------
 # Scoring

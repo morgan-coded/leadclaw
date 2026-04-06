@@ -3,23 +3,6 @@ tests/test_lifecycle.py - Tests for the extended lead lifecycle:
 booked -> completed -> paid + invoice/service reminders
 """
 
-import os
-
-import pytest
-
-from leadclaw import db
-from tests.conftest import TEST_DB
-
-
-@pytest.fixture(autouse=True)
-def fresh_db():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-    db.init_db()
-    yield
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-
 
 def _add_lead():
     from leadclaw.queries import add_lead, get_lead_by_id

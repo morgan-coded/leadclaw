@@ -7,11 +7,8 @@ tests/test_new_features.py - Tests for product pass features:
 """
 
 import json
-import os
 
-import pytest
-
-from leadclaw.db import get_conn, init_db
+from leadclaw.db import get_conn
 from leadclaw.queries import (
     add_lead,
     dismiss_reminder_standalone,
@@ -33,18 +30,6 @@ from leadclaw.service_defaults import (
     SERVICE_INTERVALS,
     get_service_interval,
 )
-from tests.conftest import TEST_DB
-
-
-@pytest.fixture(autouse=True)
-def fresh_db():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-    init_db()
-    yield
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-
 
 # ---------------------------------------------------------------------------
 # Feature 2: Per-service interval helpers

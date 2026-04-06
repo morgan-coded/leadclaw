@@ -1,10 +1,5 @@
 """Tests for communication automation: reminder queries and message templates."""
 
-import os
-
-import pytest
-
-from leadclaw import db
 from leadclaw.db import get_conn
 from leadclaw.drafting import MSG_TYPES, draft_message
 from leadclaw.queries import (
@@ -17,17 +12,6 @@ from leadclaw.queries import (
     mark_paid,
     set_review_reminder,
 )
-from tests.conftest import TEST_DB
-
-
-@pytest.fixture(autouse=True)
-def fresh_db():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-    db.init_db()
-    yield
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
 
 
 def _add(name="Test Lead", service="Lawn care"):

@@ -2,26 +2,15 @@
 tests/test_queries.py - Core query and DB logic tests
 """
 
-import os
 import sqlite3
-
-import pytest
 
 from leadclaw import db, queries
 from tests.conftest import TEST_DB
 
 
-@pytest.fixture(autouse=True)
-def fresh_db():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-    db.init_db()
-    yield
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
-
-
 def test_db_init_creates_file():
+    import os
+
     assert os.path.exists(TEST_DB)
 
 
