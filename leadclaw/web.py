@@ -73,7 +73,6 @@ from leadclaw.queries import (
     delete_lead,
     dismiss_reminder_standalone,
     get_all_active_leads,
-    get_all_leads,
     get_closed_leads,
     get_event_counts,
     get_invoice_reminders,
@@ -453,7 +452,7 @@ def _send_new_request_notification(lead: dict):
 
     subject = f"New LeadClaw request: {service} from {name}"
     body_lines = [
-        f"New service request submitted via LeadClaw:",
+        "New service request submitted via LeadClaw:",
         "",
         f"  Name:     {name}",
         f"  Phone:    {phone}",
@@ -469,7 +468,6 @@ def _send_new_request_notification(lead: dict):
     try:
         resend_key = (os.environ.get("RESEND_API_KEY") or "").strip()
         if resend_key:
-            import urllib.error
             import urllib.request as _ureq
 
             payload = _json.dumps({
