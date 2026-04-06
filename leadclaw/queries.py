@@ -71,18 +71,25 @@ def get_stale_leads(user_id: Optional[int] = None):
     return rows
 
 
-def get_lead_by_name(name: str):
+def get_lead_by_name(name: str, user_id: Optional[int] = None):
     """
     Find leads by case-insensitive partial match.
     Escapes % and _ to prevent unbounded LIKE matches.
     Returns (best_match_or_None, all_matches_list).
+    If user_id is given, only returns that user's leads.
     """
     safe = name.replace("%", r"\%").replace("_", r"\_")
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM leads WHERE name LIKE ? ESCAPE '\\' ORDER BY created_at DESC",
-            (f"%{safe}%",),
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT * FROM leads WHERE name LIKE ? ESCAPE '\\' AND user_id = ? ORDER BY created_at DESC",
+                (f"%{safe}%", user_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM leads WHERE name LIKE ? ESCAPE '\\' ORDER BY created_at DESC",
+                (f"%{safe}%",),
+            ).fetchall()
     if not rows:
         return None, []
     return rows[0], rows
@@ -227,7 +234,7 @@ def add_lead(
     user_id: int = 1,
 ):
     """Insert a new lead. Also returns existing leads with the exact same name (duplicate warning)."""
-    _, existing = get_lead_by_name(name)
+    _, existing = get_lead_by_name(name, user_id=user_id)
     duplicates = [r for r in existing if r["name"].lower() == name.lower()]
 
     with get_conn() as conn:
@@ -247,72 +254,84 @@ def add_lead(
     return lead_id, duplicates
 
 
-def update_lead(lead_id: int, **fields):
+def update_lead(lead_id: int, user_id: Optional[int] = None, **fields):
     """
     Generic field updater. Only fields in `allowed` can be updated.
     The SET clause is built from the allowlist (not raw user input),
     so column names are safe. Values are always parameterized.
+    If user_id is given, the update is restricted to that user's lead.
     """
     allowed = {"name", "phone", "email", "service", "notes", "follow_up_after"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
     set_clause = ", ".join(f"{k} = ?" for k in updates)
+    where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
+    params = (*updates.values(), lead_id, user_id) if user_id is not None else (*updates.values(), lead_id)
     with get_conn() as conn:
         conn.execute(
-            f"UPDATE leads SET {set_clause} WHERE id = ?",  # noqa: S608 — safe, allowlisted
-            (*updates.values(), lead_id),
+            f"UPDATE leads SET {set_clause} {where}",  # noqa: S608 — safe, allowlisted
+            params,
         )
 
 
-def delete_lead(lead_id: int):
+def delete_lead(lead_id: int, user_id: Optional[int] = None):
     with get_conn() as conn:
-        conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
+        if user_id is not None:
+            conn.execute("DELETE FROM leads WHERE id = ? AND user_id = ?", (lead_id, user_id))
+        else:
+            conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
 
 
-def update_quote(lead_id: int, amount: float, followup_days: int = DEFAULT_FOLLOWUP_DAYS):
+def update_quote(lead_id: int, amount: float, followup_days: int = DEFAULT_FOLLOWUP_DAYS, user_id: Optional[int] = None):
     """Set/update quote, log contact time, and schedule next follow-up."""
+    where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
+    params = (amount, f"+{followup_days}", lead_id, user_id) if user_id is not None else (amount, f"+{followup_days}", lead_id)
     with get_conn() as conn:
         conn.execute(
-            """
+            f"""
             UPDATE leads
             SET quote_amount = ?,
                 status = 'quoted',
                 last_contact_at = datetime('now'),
                 follow_up_after = datetime('now', ? || ' days')
-            WHERE id = ?
+            {where}
             """,
-            (amount, f"+{followup_days}", lead_id),
+            params,
         )
 
 
-def mark_won(lead_id: int):
+def mark_won(lead_id: int, user_id: Optional[int] = None):
+    where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
+    params = (lead_id, user_id) if user_id is not None else (lead_id,)
     with get_conn() as conn:
         conn.execute(
-            """
+            f"""
             UPDATE leads
             SET status = 'won',
                 last_contact_at = datetime('now'),
                 follow_up_after = NULL
-            WHERE id = ?
+            {where}
             """,
-            (lead_id,),
+            params,
         )
 
 
-def mark_lost(lead_id: int, reason: str, notes: Optional[str] = None):
+def mark_lost(lead_id: int, reason: str, notes: Optional[str] = None, user_id: Optional[int] = None):
+    where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
+    params = (reason, notes, lead_id, user_id) if user_id is not None else (reason, notes, lead_id)
     with get_conn() as conn:
         conn.execute(
-            """
+            f"""
             UPDATE leads
             SET status = 'lost',
                 lost_reason = ?,
                 lost_reason_notes = ?,
                 last_contact_at = datetime('now'),
                 follow_up_after = NULL
-            WHERE id = ?
+            {where}
             """,
-            (reason, notes, lead_id),
+            params,
         )
 
 
