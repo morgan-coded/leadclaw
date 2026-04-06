@@ -85,11 +85,14 @@ from leadclaw.queries import (
     get_service_reminders,
     get_stale_leads,
     get_today_leads,
+    get_unseen_requests,
+    mark_all_requests_seen,
     mark_booked,
     mark_completed,
     mark_invoice_sent,
     mark_lost,
     mark_paid,
+    mark_request_seen,
     mark_won,
     set_next_service,
     update_lead,
@@ -427,6 +430,91 @@ _REQUEST_SUCCESS_HTML = (
 )
 
 
+def _send_new_request_notification(lead: dict):
+    """Fire-and-forget owner alert when a new public request comes in.
+
+    Tries Resend first, then SMTP, then logs to stderr in dev mode.
+    Never raises — notification failures must not break form submission.
+    """
+    owner_email = os.environ.get("OWNER_NOTIFY_EMAIL") or os.environ.get("SMTP_USER", "").strip()
+    if not owner_email:
+        # No owner email configured — skip silently
+        return
+
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+    name = lead.get("name") or "Unknown"
+    service = lead.get("service") or "N/A"
+    phone = lead.get("phone") or "—"
+    address = lead.get("service_address") or "—"
+    pref_date = lead.get("requested_date") or "—"
+    pref_tw = lead.get("requested_time_window") or ""
+    notes = lead.get("notes") or ""
+
+    subject = f"New LeadClaw request: {service} from {name}"
+    body_lines = [
+        f"New service request submitted via LeadClaw:",
+        "",
+        f"  Name:     {name}",
+        f"  Phone:    {phone}",
+        f"  Service:  {service}",
+        f"  Address:  {address}",
+        f"  Pref. date: {pref_date}" + (f" ({pref_tw})" if pref_tw else ""),
+    ]
+    if notes:
+        body_lines.append(f"  Notes:    {notes}")
+    body_lines += ["", f"View in dashboard: {app_url}/"]
+    body = "\n".join(body_lines)
+
+    try:
+        resend_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+        if resend_key:
+            import urllib.error
+            import urllib.request as _ureq
+
+            payload = _json.dumps({
+                "from": "LeadClaw <noreply@morganlabs.org>",
+                "to": [owner_email],
+                "subject": subject,
+                "text": body,
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.resend.com/emails",
+                data=payload,
+                method="POST",
+                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+            )
+            try:
+                urllib.request.urlopen(req, timeout=8)
+                print(f"[NOTIFY] New request alert sent to {owner_email}", file=sys.stderr)
+                return
+            except Exception as exc:
+                print(f"[NOTIFY] Resend failed: {exc}", file=sys.stderr)
+                # Fall through to SMTP
+
+        smtp_host = os.environ.get("SMTP_HOST")
+        if smtp_host:
+            smtp_port = int(os.environ.get("SMTP_PORT", 587))
+            smtp_user = os.environ.get("SMTP_USER", "")
+            smtp_pass = os.environ.get("SMTP_PASS", "")
+            from_addr = smtp_user or owner_email
+            msg = MIMEText(body, "plain")
+            msg["Subject"] = subject
+            msg["From"] = from_addr
+            msg["To"] = owner_email
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=8) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.login(smtp_user, smtp_pass)
+                srv.sendmail(from_addr, [owner_email], msg.as_string())
+            print(f"[NOTIFY] New request alert sent via SMTP to {owner_email}", file=sys.stderr)
+            return
+
+        # Dev fallback — print to stderr
+        print(f"[NOTIFY] New request from {name} ({service}) — {phone} — {address}", file=sys.stderr)
+    except Exception as exc:
+        print(f"[NOTIFY] Failed to send owner notification: {exc}", file=sys.stderr)
+
+
 @app.route("/request", methods=["GET", "POST"])
 def public_request():
     """Public service request form. No auth required. Creates a lead on submit."""
@@ -508,6 +596,12 @@ def public_request():
         service_address=service_address,
         user_id=1,
     )
+
+    _send_new_request_notification({
+        "name": name, "service": service, "phone": phone,
+        "service_address": service_address, "requested_date": requested_date,
+        "requested_time_window": requested_time_window, "notes": notes,
+    })
 
     return render_template_string(_REQUEST_SUCCESS_HTML, name=name, avail_warning=avail_warning)
 
@@ -672,6 +766,7 @@ def _lead_to_dict(row) -> dict:
         "requested_time_window": _safe_col("requested_time_window"),
         "service_address": _safe_col("service_address"),
         "scheduled_time_window": _safe_col("scheduled_time_window"),
+        "request_seen_at": _safe_col("request_seen_at"),
     }
 
 
@@ -715,6 +810,7 @@ def api_summary(user_id: int) -> dict:
         "today": today,
         "stale": stale,
         "active": active,
+        "unseen_requests_count": len(get_unseen_requests(user_id=user_id)),
         "invoice_reminders": [_lead_to_dict(r) for r in get_invoice_reminders(user_id=user_id)],
         "service_reminders": [_lead_to_dict(r) for r in get_service_reminders(user_id=user_id)],
         "job_today": [_lead_to_dict(r) for r in get_job_today_leads(user_id=user_id)],
@@ -1176,6 +1272,27 @@ def route_api_requests():
         return jsonify({"requests": [_lead_to_dict(r) for r in rows]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/requests/<int:lead_id>/seen", methods=["POST"])
+@login_required
+@verified_required
+def route_mark_request_seen(lead_id):
+    """Mark a single public request as seen by the owner."""
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": "Not found"}), 404
+    mark_request_seen(lead_id, user_id=current_user.id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/requests/seen-all", methods=["POST"])
+@login_required
+@verified_required
+def route_mark_all_requests_seen():
+    """Mark all unseen public requests as seen."""
+    count = mark_all_requests_seen(user_id=current_user.id)
+    return jsonify({"ok": True, "marked": count})
 
 
 @app.route("/api/reminders/dismiss", methods=["POST"])

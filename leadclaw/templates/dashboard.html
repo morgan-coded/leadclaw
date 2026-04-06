@@ -201,6 +201,15 @@
 </nav>
 <div class="main">
   <div class="tab-panel active" id="tab-today">
+    <div id="new-requests-banner" style="display:none;background:#1e3a5f;border:1px solid #1d4ed8;border-radius:10px;padding:12px 14px;margin:12px 16px 0;display:none;cursor:pointer" onclick="switchTab('requests')">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:18px">&#x1F4E5;</span>
+        <div>
+          <div id="new-requests-banner-text" style="font-size:14px;font-weight:600;color:#93c5fd"></div>
+          <div style="font-size:11px;color:#60a5fa;margin-top:1px">Tap to review &rarr;</div>
+        </div>
+      </div>
+    </div>
     <section><h2>Due Today</h2><div class="lead-list" id="today"></div></section>
     <section><h2>Needs Action (Overdue)</h2><div class="lead-list" id="stale"></div></section>
   </div>
@@ -221,7 +230,8 @@
     <section>
       <div class="req-filter-row">
         <h2 style="margin-bottom:0">Service Requests</h2>
-        <div style="margin-left:auto">
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <button id="req-mark-all-seen" class="btn btn-sm" style="display:none" onclick="markAllRequestsSeen()">Mark all seen</button>
           <select id="req-filter" onchange="loadRequests()"
             style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;
                    color:var(--text);padding:6px 10px;font-size:13px;font-family:inherit;height:36px">
@@ -659,6 +669,22 @@ async function load(){
       +(sr||[]).length+(d.reactivation_30||[]).length+(d.reactivation_60||[]).length+(d.reactivation_90||[]).length;
     const rem_badge=document.getElementById('reminders-badge');
     if(rem_badge){rem_badge.textContent=reminderCount>0?String(reminderCount):'';rem_badge.style.display=reminderCount>0?'':'none';}
+
+    // Requests badge (unseen count from summary)
+    const unseenCount=d.unseen_requests_count||0;
+    _updateRequestsBadge(unseenCount);
+
+    // Today tab: new requests banner
+    const banner=document.getElementById('new-requests-banner');
+    const bannerText=document.getElementById('new-requests-banner-text');
+    if(banner&&bannerText){
+      if(unseenCount>0){
+        bannerText.textContent=unseenCount===1?'1 new service request waiting':''+unseenCount+' new service requests waiting';
+        banner.style.display='';
+      } else {
+        banner.style.display='none';
+      }
+    }
 
     _lastLoaded['today']=_lastLoaded['pipeline']=_lastLoaded['reminders']=Date.now();
   }catch(e){console.error(e);}
@@ -1269,6 +1295,13 @@ function renderRequestCard(r){
     +'</div>';
 }
 
+function _updateRequestsBadge(count){
+  const b=document.getElementById('requests-badge');
+  if(b){b.textContent=count>0?String(count):'';b.style.display=count>0?'':'none';}
+  const btn=document.getElementById('req-mark-all-seen');
+  if(btn)btn.style.display=count>0?'':'none';
+}
+
 async function loadRequests(){
   const filter=document.getElementById('req-filter').value||'unbooked';
   const el=document.getElementById('req-list');
@@ -1277,14 +1310,20 @@ async function loadRequests(){
   try{
     const d=await fetch('/api/requests?filter='+encodeURIComponent(filter)).then(r=>r.json());
     const reqs=d.requests||[];
-    if(!reqs.length){el.innerHTML='<div class="empty">'+(filter==='unbooked'?'No pending requests 🎉':'No requests found.')+'</div>';}
+    if(!reqs.length){el.innerHTML='<div class="empty">'+(filter==='unbooked'?'No pending requests \ud83c\udf89':'No requests found.')+'</div>';}
     else{el.innerHTML=reqs.map(renderRequestCard).join('');}
-    // Update badge (unbooked count)
-    if(filter==='unbooked'||!document.getElementById('requests-badge').textContent){
-      const badge=document.getElementById('requests-badge');
-      if(badge){
-        const count=filter==='unbooked'?reqs.length:null;
-        if(count!==null){badge.textContent=count>0?String(count):'';badge.style.display=count>0?'':'none';}
+    // Mark all as seen when owner opens unbooked view
+    if(filter==='unbooked'){
+      const unseen=reqs.filter(function(r){return !r.request_seen_at;});
+      if(unseen.length){
+        // Fire-and-forget: mark all seen
+        fetch('/api/requests/seen-all',{method:'POST'}).then(function(){
+          _updateRequestsBadge(0);
+          // Refresh summary badge too
+          load();
+        }).catch(function(){});
+      } else {
+        _updateRequestsBadge(0);
       }
     }
   }catch(e){
@@ -1292,13 +1331,52 @@ async function loadRequests(){
   }
 }
 
-async function refreshRequestsBadge(){
+async function markAllRequestsSeen(){
   try{
-    const d=await fetch('/api/requests?filter=unbooked').then(r=>r.json());
-    const count=(d.requests||[]).length;
-    const b=document.getElementById('requests-badge');
-    if(b){b.textContent=count>0?String(count):'';b.style.display=count>0?'':'none';}
-  }catch(e){}
+    await fetch('/api/requests/seen-all',{method:'POST'});
+    _updateRequestsBadge(0);
+    toast('All requests marked seen.');
+    load();
+  }catch(e){toast('Error',true);}
+}
+
+function renderRequestCard(r){
+  const isBooked=['booked','completed','paid','won'].includes(r.status);
+  const isUnseen=!r.request_seen_at&&!isBooked;
+  const cls=isBooked?' booked':'';
+  const borderStyle=isUnseen?'border:1px solid var(--accent);':'';
+  const fields=[];
+  if(r.service)fields.push(['Service',esc(r.service)]);
+  if(r.service_address)fields.push(['Address',esc(r.service_address)]);
+  if(r.phone)fields.push(['Phone',esc(r.phone)]);
+  if(r.email)fields.push(['Email',esc(r.email)]);
+  if(r.requested_date)fields.push(['Pref. Date',esc(r.requested_date)]);
+  if(r.requested_time_window)fields.push(['Pref. Time',esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)]);
+  if(r.notes)fields.push(['Notes',esc(r.notes)]);
+  if(r.scheduled_date)fields.push(['Booked Date',esc(r.scheduled_date)+(r.scheduled_time_window&&r.scheduled_time_window!=='flexible'?' \u00b7 '+(TW_LABELS[r.scheduled_time_window]||r.scheduled_time_window):'')]);
+  const created=r.created_at?r.created_at.slice(0,10):'';
+
+  const rj=esc(JSON.stringify(r));
+  let actions='';
+  if(!isBooked){
+    actions+='<button class="btn btn-primary" onclick="openBookRequest(JSON.parse(this.dataset.r))" data-r="'+rj+'">\ud83d\udcc5 Book</button>';
+    actions+='<button class="btn" onclick="copyMessage(JSON.parse(this.dataset.r),\'booking_confirmation\')" data-r="'+rj+'">Copy Confirm</button>';
+    actions+='<button class="btn btn-danger" onclick="openLost('+r.id+')">Pass</button>';
+  } else {
+    actions+='<button class="btn" onclick="copyMessage(JSON.parse(this.dataset.r),\'booking_confirmation\')" data-r="'+rj+'">Copy Confirm</button>';
+  }
+
+  const newBadge=isUnseen?'<span style="font-size:10px;font-weight:700;background:var(--accent);color:#fff;border-radius:4px;padding:1px 6px;margin-left:6px;vertical-align:middle">NEW</span>':'';
+  const headerBadge=isBooked?badge(r.status):'<span class="badge badge-request">Request</span>';
+
+  return '<div class="req-card'+cls+'" style="'+borderStyle+'" data-id="'+r.id+'" data-status="'+r.status+'">'
+    +'<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">'
+    +'<div><div style="font-size:17px;font-weight:600">'+esc(r.name)+newBadge+'</div>'
+    +(created?'<div style="font-size:11px;color:var(--muted)">Submitted '+created+'</div>':'')
+    +'</div>'+headerBadge+'</div>'
+    +fields.map(function(f){return '<div class="req-field"><span class="req-field-label">'+f[0]+'</span><span class="req-field-val">'+f[1]+'</span></div>';}).join('')
+    +'<div class="req-actions">'+actions+'</div>'
+    +'</div>';
 }
 
 function openBookRequest(r){
@@ -1312,13 +1390,11 @@ function openBookRequest(r){
   });
   // Populate summary
   const parts=[];
-  if(r.service)parts.push('🔧 '+esc(r.service));
-  if(r.service_address)parts.push('📍 '+esc(r.service_address));
-  if(r.requested_date)parts.push('📅 Prefers '+esc(r.requested_date)+(r.requested_time_window?' ('+esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)+')':''));
-  if(r.notes)parts.push('📋 '+esc(r.notes));
-  document.getElementById('breq-summary').innerHTML='👤 <strong>'+esc(r.name)+'</strong>'+(r.phone?' · '+esc(r.phone):'')+'
-'+parts.join('
-');
+  if(r.service)parts.push('\ud83d\udd27 '+esc(r.service));
+  if(r.service_address)parts.push('\ud83d\udccd '+esc(r.service_address));
+  if(r.requested_date)parts.push('\ud83d\udcc5 Prefers '+esc(r.requested_date)+(r.requested_time_window?' ('+esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)+')':''));
+  if(r.notes)parts.push('\ud83d\udccb '+esc(r.notes));
+  document.getElementById('breq-summary').innerHTML='\ud83d\udc64 <strong>'+esc(r.name)+'</strong>'+(r.phone?' \u00b7 '+esc(r.phone):'')+'\n'+parts.join('\n');
   openSheet('sheet-book-request');
   // Auto-check availability if customer provided a preferred date
   if(r.requested_date)checkBreqAvailability();
@@ -1336,7 +1412,7 @@ async function submitBookRequest(){
   const j=await r.json();
   if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
   closeSheet('sheet-book-request');
-  toast('Booked! 🎉');
+  toast('Booked! \ud83c\udf89');
   // Copy confirmation message to clipboard after booking
   const lead=await fetch('/api/leads/'+id).then(res=>res.json()).catch(()=>null);
   if(lead&&!lead.error){
@@ -1344,13 +1420,13 @@ async function submitBookRequest(){
     try{await navigator.clipboard.writeText(msg);}catch(e){}
   }
   loadRequests();
-  refreshRequestsBadge();
+  load(); // refresh unseen count
 }
 
 // Init
 switchTab('today');
 load();
-refreshRequestsBadge();
+
 </script>
 </body>
 </html>

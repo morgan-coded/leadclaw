@@ -833,6 +833,53 @@ def get_reactivation_leads(days: int, user_id: Optional[int] = None):
         ).fetchall()
 
 
+def get_unseen_requests(user_id: Optional[int] = None):
+    """Public request leads that the owner hasn't seen yet and are still unbooked/actionable."""
+    uid_clause = "AND user_id = ?" if user_id is not None else ""
+    uid_params = (user_id,) if user_id is not None else ()
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT * FROM leads
+            WHERE lead_source = 'public_request'
+              AND request_seen_at IS NULL
+              AND status NOT IN ('booked','completed','paid','won','lost')
+              {uid_clause}
+            ORDER BY created_at DESC
+            """,
+            uid_params,
+        ).fetchall()
+
+
+def mark_request_seen(lead_id: int, user_id: Optional[int] = None) -> bool:
+    """Mark a public request as seen. Returns True if the lead was found."""
+    where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
+    params = (lead_id, user_id) if user_id is not None else (lead_id,)
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE leads SET request_seen_at = datetime('now') {where}",
+            params,
+        )
+        return cur.rowcount > 0
+
+
+def mark_all_requests_seen(user_id: Optional[int] = None) -> int:
+    """Mark all unseen public requests as seen. Returns count updated."""
+    uid_clause = "AND user_id = ?" if user_id is not None else ""
+    uid_params = (user_id,) if user_id is not None else ()
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE leads SET request_seen_at = datetime('now')
+            WHERE lead_source = 'public_request'
+              AND request_seen_at IS NULL
+              {uid_clause}
+            """,
+            uid_params,
+        )
+        return cur.rowcount
+
+
 def get_public_requests(
     user_id: Optional[int] = None,
     filter: str = "unbooked",

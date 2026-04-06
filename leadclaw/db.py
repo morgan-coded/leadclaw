@@ -129,6 +129,8 @@ def init_db():
             "service_address TEXT",
             # Feature: request-to-book conversion
             "scheduled_time_window TEXT",
+            # Feature: new request notifications
+            "request_seen_at TEXT",
         ]
         for col_def in new_columns:
             try:
