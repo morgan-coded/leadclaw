@@ -1,4 +1,5 @@
 """Tests for communication automation: reminder queries and message templates."""
+
 import os
 
 import pytest
@@ -38,6 +39,7 @@ def _add(name="Test Lead", service="Lawn care"):
 # draft_message — template correctness
 # ---------------------------------------------------------------------------
 
+
 def test_draft_message_all_types():
     """draft_message returns a non-empty string for every MSG_TYPE."""
     lead = {
@@ -53,14 +55,24 @@ def test_draft_message_all_types():
 
 
 def test_draft_message_uses_first_name():
-    lead = {"name": "Mike Johnson", "service": "lawn care", "quote_amount": None, "scheduled_date": None}
+    lead = {
+        "name": "Mike Johnson",
+        "service": "lawn care",
+        "quote_amount": None,
+        "scheduled_date": None,
+    }
     msg = draft_message(lead, "quote_followup")
     assert "Mike" in msg
     assert "Johnson" not in msg
 
 
 def test_draft_message_includes_service():
-    lead = {"name": "Mike", "service": "gutter cleaning", "quote_amount": None, "scheduled_date": None}
+    lead = {
+        "name": "Mike",
+        "service": "gutter cleaning",
+        "quote_amount": None,
+        "scheduled_date": None,
+    }
     msg = draft_message(lead, "booking_confirmation")
     assert "gutter cleaning" in msg
 
@@ -86,6 +98,7 @@ def test_draft_message_no_api_call(monkeypatch):
         return "AI response"
 
     import leadclaw.drafting as drafting_mod
+
     monkeypatch.setattr(drafting_mod, "_call", fake_call)
 
     lead = {"name": "Sam", "service": "painting", "quote_amount": None, "scheduled_date": None}
@@ -104,6 +117,7 @@ def test_draft_message_fallback_name():
 # get_job_today_leads
 # ---------------------------------------------------------------------------
 
+
 def test_get_job_today_leads_empty():
     _add()
     assert get_job_today_leads() == []
@@ -111,6 +125,7 @@ def test_get_job_today_leads_empty():
 
 def test_get_job_today_leads_booked_today():
     from datetime import date
+
     lead_id = _add()
     mark_booked(lead_id, str(date.today()))
     leads = get_job_today_leads()
@@ -123,6 +138,7 @@ def test_get_job_today_leads_excludes_non_booked():
     # Force scheduled_date = today but status = 'new'
     with get_conn() as conn:
         from datetime import date
+
         conn.execute(
             "UPDATE leads SET scheduled_date = ? WHERE id = ?",
             (str(date.today()), lead_id),
@@ -142,6 +158,7 @@ def test_get_job_today_leads_excludes_future_bookings():
 # get_review_reminders
 # ---------------------------------------------------------------------------
 
+
 def test_get_review_reminders_empty():
     _add()
     assert get_review_reminders() == []
@@ -149,6 +166,7 @@ def test_get_review_reminders_empty():
 
 def test_get_review_reminders_after_complete():
     from datetime import date
+
     lead_id = _add()
     mark_booked(lead_id, str(date.today()))
     mark_completed(lead_id)
@@ -160,6 +178,7 @@ def test_get_review_reminders_after_complete():
 
 def test_get_review_reminders_future_not_shown():
     from datetime import date
+
     lead_id = _add()
     mark_booked(lead_id, str(date.today()))
     mark_completed(lead_id)
@@ -171,6 +190,7 @@ def test_get_review_reminders_future_not_shown():
 # ---------------------------------------------------------------------------
 # set_review_reminder
 # ---------------------------------------------------------------------------
+
 
 def test_set_review_reminder_today():
     lead_id = _add()
@@ -190,8 +210,10 @@ def test_set_review_reminder_future_not_in_due():
 # mark_completed / mark_paid auto-set review_reminder_at
 # ---------------------------------------------------------------------------
 
+
 def test_mark_completed_sets_review_reminder():
     from datetime import date
+
     lead_id = _add()
     mark_booked(lead_id, str(date.today()))
     mark_completed(lead_id)
@@ -204,6 +226,7 @@ def test_mark_completed_sets_review_reminder():
 
 def test_mark_paid_sets_review_reminder():
     from datetime import date
+
     lead_id = _add()
     mark_booked(lead_id, str(date.today()))
     mark_completed(lead_id)
@@ -222,14 +245,13 @@ def test_mark_paid_sets_review_reminder():
 def test_mark_paid_preserves_existing_review_reminder():
     """COALESCE: mark_paid should not overwrite an existing review_reminder_at."""
     from datetime import date
+
     lead_id = _add()
     mark_booked(lead_id, str(date.today()))
     mark_completed(lead_id)
     # Set a specific past date
     with get_conn() as conn:
-        conn.execute(
-            "UPDATE leads SET review_reminder_at = '2020-01-01' WHERE id = ?", (lead_id,)
-        )
+        conn.execute("UPDATE leads SET review_reminder_at = '2020-01-01' WHERE id = ?", (lead_id,))
         conn.commit()
     mark_paid(lead_id)
     with get_conn() as conn:
@@ -244,6 +266,7 @@ def test_mark_paid_preserves_existing_review_reminder():
 # ---------------------------------------------------------------------------
 # get_reactivation_leads — range-based buckets, pre-job statuses only
 # ---------------------------------------------------------------------------
+
 
 def test_get_reactivation_leads_empty():
     _add()

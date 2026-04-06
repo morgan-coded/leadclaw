@@ -219,10 +219,7 @@ def draft_message(lead: dict, msg_type: str) -> str:
             + (f" on {scheduled}" if scheduled != "your scheduled date" else "")
             + ". Let me know if you need to reschedule. Looking forward to it!"
         ),
-        "on_my_way": (
-            f"Hey {name}, I'm on my way for {service} today."
-            + " See you soon!"
-        ),
+        "on_my_way": (f"Hey {name}, I'm on my way for {service} today." + " See you soon!"),
         "running_late": (
             f"Hey {name}, heads up — I'm running about 15 minutes behind for {service} today."
             + " I'll be there shortly, thanks for your patience!"
@@ -255,6 +252,7 @@ def draft_message(lead: dict, msg_type: str) -> str:
 # ---------------------------------------------------------------------------
 # AI pipeline analysis
 # ---------------------------------------------------------------------------
+
 
 def summarize_pipeline(leads: list, summary_rows: list) -> Optional[str]:
     status_counts = {row["status"]: row["count"] for row in summary_rows}

@@ -396,7 +396,9 @@ def cmd_complete(args):
     if not lead:
         return
     mark_completed(lead["id"])
-    print(f"[{lead['id']}] {lead['name']} → completed. Run: leadclaw invoice {lead['name']} to send invoice.")
+    print(
+        f"[{lead['id']}] {lead['name']} → completed. Run: leadclaw invoice {lead['name']} to send invoice."
+    )
 
 
 def cmd_invoice(args):
@@ -409,10 +411,15 @@ def cmd_invoice(args):
         print("Invoice amount must be greater than zero.")
         return
     from leadclaw.config import DEFAULT_INVOICE_REMINDER_DAYS
-    mark_invoice_sent(lead["id"], invoice_amount=amount, reminder_days=DEFAULT_INVOICE_REMINDER_DAYS)
+
+    mark_invoice_sent(
+        lead["id"], invoice_amount=amount, reminder_days=DEFAULT_INVOICE_REMINDER_DAYS
+    )
     display_amount = amount or lead["quote_amount"]
     amt_str = f"${display_amount:,.0f}" if display_amount else "(no amount)"
-    print(f"[{lead['id']}] {lead['name']} — invoice sent {amt_str}. Reminder in {DEFAULT_INVOICE_REMINDER_DAYS} days.")
+    print(
+        f"[{lead['id']}] {lead['name']} — invoice sent {amt_str}. Reminder in {DEFAULT_INVOICE_REMINDER_DAYS} days."
+    )
 
 
 def cmd_paid(args):
@@ -421,7 +428,12 @@ def cmd_paid(args):
     if not lead:
         return
     from leadclaw.config import DEFAULT_RECURRING_DAYS
-    recurring = args.recurring if hasattr(args, "recurring") and args.recurring is not None else DEFAULT_RECURRING_DAYS
+
+    recurring = (
+        args.recurring
+        if hasattr(args, "recurring") and args.recurring is not None
+        else DEFAULT_RECURRING_DAYS
+    )
     mark_paid(lead["id"], recurring_days=recurring)
     print(f"[{lead['id']}] {lead['name']} → PAID 💰. Next service reminder in {recurring} days.")
 
@@ -449,7 +461,9 @@ def cmd_reminders(args):
     react_60 = get_reactivation_leads(60)
     react_90 = get_reactivation_leads(90)
 
-    any_results = any([job_today, invoice_due, review_due, service_due, react_30, react_60, react_90])
+    any_results = any(
+        [job_today, invoice_due, review_due, service_due, react_30, react_60, react_90]
+    )
 
     if not any_results:
         print("No pending reminders.")
@@ -465,19 +479,28 @@ def cmd_reminders(args):
             print(base + extra)
 
     def _invoice_extra(lead):
-        if lead.get('invoice_amount'):
+        if lead.get("invoice_amount"):
             return f" — ${lead['invoice_amount']:,.0f}"
-        if lead.get('quote_amount'):
+        if lead.get("quote_amount"):
             return f" — ${lead['quote_amount']:,.0f}"
         return ""
 
-    _print_section("Jobs Today", job_today,
-        lambda lead: f" — scheduled {str(lead.get('scheduled_date') or '')[:10]}")
+    _print_section(
+        "Jobs Today",
+        job_today,
+        lambda lead: f" — scheduled {str(lead.get('scheduled_date') or '')[:10]}",
+    )
     _print_section("Invoice Reminders", invoice_due, _invoice_extra)
-    _print_section("Review Requests", review_due,
-        lambda lead: f" — completed {str(lead.get('completed_at') or '')[:10]}")
-    _print_section("Recurring Service Due", service_due,
-        lambda lead: f" — due {str(lead.get('service_reminder_at') or '')[:10]}")
+    _print_section(
+        "Review Requests",
+        review_due,
+        lambda lead: f" — completed {str(lead.get('completed_at') or '')[:10]}",
+    )
+    _print_section(
+        "Recurring Service Due",
+        service_due,
+        lambda lead: f" — due {str(lead.get('service_reminder_at') or '')[:10]}",
+    )
     _print_section("Reactivation — 30 days", react_30)
     _print_section("Reactivation — 60 days", react_60)
     _print_section("Reactivation — 90 days", react_90)
@@ -493,13 +516,17 @@ def cmd_dismiss_reminder(args):
         return
     reminder_type = args.type
     if reminder_type not in DISMISSAL_FIELDS:
-        print(f"Unknown reminder type '{reminder_type}'. Valid types: {', '.join(DISMISSAL_FIELDS)}")
+        print(
+            f"Unknown reminder type '{reminder_type}'. Valid types: {', '.join(DISMISSAL_FIELDS)}"
+        )
         return
     ok = dismiss_reminder_standalone(lead["id"], reminder_type)
     if ok:
-        label = {"review_request": "Review request marked sent",
-                 "reactivation": "Reactivation reminder dismissed",
-                 "job_today": "Job reminder dismissed for today"}.get(reminder_type, "Dismissed")
+        label = {
+            "review_request": "Review request marked sent",
+            "reactivation": "Reactivation reminder dismissed",
+            "job_today": "Job reminder dismissed for today",
+        }.get(reminder_type, "Dismissed")
         print(f"[{lead['id']}] {lead['name']} — {label}.")
     else:
         print("Could not dismiss reminder (lead not found or no change).")
@@ -805,7 +832,13 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_invoice.add_argument("name", nargs="?", default="")
-    p_invoice.add_argument("amount", type=float, nargs="?", default=None, help="Invoice amount (default: same as quote)")
+    p_invoice.add_argument(
+        "amount",
+        type=float,
+        nargs="?",
+        default=None,
+        help="Invoice amount (default: same as quote)",
+    )
     p_invoice.add_argument("--id", type=int)
 
     p_paid = sub.add_parser(
@@ -816,7 +849,12 @@ def build_parser():
     )
     p_paid.add_argument("name", nargs="?", default="")
     p_paid.add_argument("--id", type=int)
-    p_paid.add_argument("--recurring", type=int, default=None, help="Days until next service reminder (default: LEADCLAW_RECURRING_DAYS or 90)")
+    p_paid.add_argument(
+        "--recurring",
+        type=int,
+        default=None,
+        help="Days until next service reminder (default: LEADCLAW_RECURRING_DAYS or 90)",
+    )
 
     p_nextsvc = sub.add_parser(
         "next-service",
@@ -828,7 +866,9 @@ def build_parser():
     p_nextsvc.add_argument("date", help="Next service date (YYYY-MM-DD)")
     p_nextsvc.add_argument("--id", type=int)
 
-    sub.add_parser("reminders", help="Show all pending reminders (jobs, invoices, reviews, reactivations)")
+    sub.add_parser(
+        "reminders", help="Show all pending reminders (jobs, invoices, reviews, reactivations)"
+    )
 
     p_dismiss = sub.add_parser(
         "dismiss-reminder",
@@ -843,8 +883,12 @@ def build_parser():
     )
     p_dismiss.add_argument("name", nargs="?", default="")
     p_dismiss.add_argument("--id", type=int)
-    p_dismiss.add_argument("--type", required=True, dest="type",
-                           help="Reminder type: review_request, reactivation, job_today")
+    p_dismiss.add_argument(
+        "--type",
+        required=True,
+        dest="type",
+        help="Reminder type: review_request, reactivation, job_today",
+    )
 
     sub.add_parser("usage", help="Show pilot usage event counts by type")
 
@@ -862,8 +906,9 @@ def build_parser():
     )
     p_dm.add_argument("name", nargs="?", default="")
     p_dm.add_argument("--id", type=int)
-    p_dm.add_argument("--type", required=True, dest="type",
-                      help="Message type (see --help for full list)")
+    p_dm.add_argument(
+        "--type", required=True, dest="type", help="Message type (see --help for full list)"
+    )
 
     p_draft = sub.add_parser(
         "draft-followup",

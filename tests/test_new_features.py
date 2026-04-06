@@ -140,9 +140,7 @@ def test_log_event_meta_stored_as_json():
     with get_conn() as conn:
         log_event(conn, "meta_test", user_id=1, meta={"action": "test", "count": 5})
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT meta FROM event_log WHERE event_type = 'meta_test'"
-        ).fetchone()
+        row = conn.execute("SELECT meta FROM event_log WHERE event_type = 'meta_test'").fetchone()
     assert row is not None
     meta = json.loads(row["meta"])
     assert meta["action"] == "test"
@@ -254,9 +252,7 @@ def test_dismiss_review_request_hides_from_reminders():
     mark_completed(lead_id)
     # Force review_reminder_at to today
     with get_conn() as conn:
-        conn.execute(
-            "UPDATE leads SET review_reminder_at = date('now') WHERE id = ?", (lead_id,)
-        )
+        conn.execute("UPDATE leads SET review_reminder_at = date('now') WHERE id = ?", (lead_id,))
     # Confirm it appears before dismissal
     before = [r["id"] for r in get_review_reminders()]
     assert lead_id in before
@@ -299,6 +295,7 @@ def test_dismiss_reactivation_hides_from_results():
 def test_dismiss_job_today_hides_for_today():
     """After dismissing job_today, lead should not appear in today's jobs."""
     from datetime import date
+
     today = date.today().isoformat()
     lead_id, _ = add_lead("Job Dismiss Test", "pressure washing")
     mark_booked(lead_id, today)
@@ -326,6 +323,7 @@ def test_dismiss_invalid_type_returns_false():
 def test_pipeline_summary_counts_won_as_paid():
     """Won leads should be counted in the 'paid' bucket in pipeline summary."""
     from leadclaw.queries import get_pipeline_summary, mark_won
+
     lead_id, _ = add_lead("Won Lead", "roofing")
     update_quote(lead_id, 1000.0)
     mark_won(lead_id)
@@ -345,6 +343,7 @@ def test_api_closed_includes_won_leads():
     """api_closed should include leads with status='won'."""
     from leadclaw.queries import mark_won
     from leadclaw.web import api_closed
+
     lead_id, _ = add_lead("Won Close", "roofing", user_id=1)
     mark_won(lead_id)
     data = api_closed(user_id=1)
@@ -355,6 +354,7 @@ def test_api_closed_includes_won_leads():
 def test_api_closed_includes_paid_leads():
     """api_closed should include leads with status='paid'."""
     from leadclaw.web import api_closed
+
     lead_id, _ = add_lead("Paid Close", "lawn care", user_id=1)
     mark_paid(lead_id)
     data = api_closed(user_id=1)
@@ -438,6 +438,7 @@ def test_web_usage_endpoint():
 def test_web_usage_section_in_more_tab():
     """Dashboard HTML should contain the usage section."""
     from leadclaw.web import _build_dashboard_html
+
     html = _build_dashboard_html("test@example.com")
     assert "usage-section" in html
     assert "loadUsage" in html

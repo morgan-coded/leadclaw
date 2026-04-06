@@ -43,20 +43,30 @@ def run_daily_digest():
     if invoice_due:
         print(f"\n=== Invoice Reminders ({len(invoice_due)}) ===")
         for lead in invoice_due:
-            amt = f"${lead['invoice_amount']:,.0f}" if lead['invoice_amount'] else f"${lead['quote_amount']:,.0f}" if lead['quote_amount'] else ""
+            amt = (
+                f"${lead['invoice_amount']:,.0f}"
+                if lead["invoice_amount"]
+                else f"${lead['quote_amount']:,.0f}"
+                if lead["quote_amount"]
+                else ""
+            )
             print(f"  [{lead['id']}] {lead['name']} — {amt} — follow up on payment")
 
     service_due = get_service_reminders()
     if service_due:
         print(f"\n=== Recurring Service Due ({len(service_due)}) ===")
         for lead in service_due:
-            print(f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} — due {str(lead['service_reminder_at'])[:10]}")
+            print(
+                f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} — due {str(lead['service_reminder_at'])[:10]}"
+            )
 
     job_today = get_job_today_leads()
     if job_today:
         print(f"\n=== Jobs Today ({len(job_today)}) ===")
         for lead in job_today:
-            print(f"  [{lead['id']}] {lead['name']} — scheduled {str(lead.get('scheduled_date') or '')[:10]}")
+            print(
+                f"  [{lead['id']}] {lead['name']} — scheduled {str(lead.get('scheduled_date') or '')[:10]}"
+            )
 
     review_due = get_review_reminders()
     if review_due:

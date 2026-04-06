@@ -20,7 +20,7 @@ SERVICE_INTERVALS: dict[str, int] = {
     "pest control": 90,
     "hvac": 180,
     "air filter": 90,
-    "roofing": 1825,       # 5 years
+    "roofing": 1825,  # 5 years
     "roof inspection": 365,
     "house cleaning": 14,
     "cleaning": 30,
@@ -29,10 +29,10 @@ SERVICE_INTERVALS: dict[str, int] = {
     "tree trimming": 365,
     "tree service": 365,
     "snow removal": 7,
-    "painting": 1825,      # 5 years
+    "painting": 1825,  # 5 years
     "deck staining": 730,  # 2 years
-    "concrete": 3650,      # 10 years
-    "fencing": 1825,       # 5 years
+    "concrete": 3650,  # 10 years
+    "fencing": 1825,  # 5 years
     "plumbing": 365,
     "electrical": 365,
     "carpet cleaning": 180,

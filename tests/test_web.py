@@ -462,7 +462,11 @@ def test_html_signout_link():
     """Dashboard must contain a sign-out link."""
     assert "/logout" in DASHBOARD_HTML
     # Sign out label (case may vary with mobile-first UI)
-    assert "sign-out" in DASHBOARD_HTML.lower() or "sign out" in DASHBOARD_HTML.lower() or "logout" in DASHBOARD_HTML.lower()
+    assert (
+        "sign-out" in DASHBOARD_HTML.lower()
+        or "sign out" in DASHBOARD_HTML.lower()
+        or "logout" in DASHBOARD_HTML.lower()
+    )
 
 
 # ---------------------------------------------------------------------------

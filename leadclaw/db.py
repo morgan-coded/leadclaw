@@ -180,7 +180,9 @@ def init_db():
         except Exception:
             pass
         try:
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at)"
+            )
         except Exception:
             pass
 

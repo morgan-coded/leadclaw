@@ -468,16 +468,28 @@ def _lead_to_dict(row) -> dict:
         "notes": row["notes"],
         "lost_reason": row["lost_reason"],
         "lost_reason_notes": _safe_col("lost_reason_notes"),
-        "scheduled_date": str(_safe_col("scheduled_date"))[:10] if _safe_col("scheduled_date") else None,
+        "scheduled_date": str(_safe_col("scheduled_date"))[:10]
+        if _safe_col("scheduled_date")
+        else None,
         "booked_at": str(_safe_col("booked_at"))[:10] if _safe_col("booked_at") else None,
         "completed_at": str(_safe_col("completed_at"))[:10] if _safe_col("completed_at") else None,
         "invoice_amount": _safe_col("invoice_amount"),
-        "invoice_sent_at": str(_safe_col("invoice_sent_at"))[:10] if _safe_col("invoice_sent_at") else None,
+        "invoice_sent_at": str(_safe_col("invoice_sent_at"))[:10]
+        if _safe_col("invoice_sent_at")
+        else None,
         "paid_at": str(_safe_col("paid_at"))[:10] if _safe_col("paid_at") else None,
-        "next_service_due_at": str(_safe_col("next_service_due_at"))[:10] if _safe_col("next_service_due_at") else None,
-        "invoice_reminder_at": str(_safe_col("invoice_reminder_at"))[:10] if _safe_col("invoice_reminder_at") else None,
-        "service_reminder_at": str(_safe_col("service_reminder_at"))[:10] if _safe_col("service_reminder_at") else None,
-        "review_reminder_at": str(_safe_col("review_reminder_at"))[:10] if _safe_col("review_reminder_at") else None,
+        "next_service_due_at": str(_safe_col("next_service_due_at"))[:10]
+        if _safe_col("next_service_due_at")
+        else None,
+        "invoice_reminder_at": str(_safe_col("invoice_reminder_at"))[:10]
+        if _safe_col("invoice_reminder_at")
+        else None,
+        "service_reminder_at": str(_safe_col("service_reminder_at"))[:10]
+        if _safe_col("service_reminder_at")
+        else None,
+        "review_reminder_at": str(_safe_col("review_reminder_at"))[:10]
+        if _safe_col("review_reminder_at")
+        else None,
     }
 
 
@@ -565,8 +577,7 @@ def api_pilot_candidates(user_id: int, status: str = None) -> dict:
 
 def _build_dashboard_html(user_email: str) -> str:
     """Return the full dashboard HTML with user email and signout link injected."""
-    _page = (
-        """<!DOCTYPE html>
+    _page = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1591,7 +1602,6 @@ load();
 </script>
 </body>
 </html>"""
-    )
     return (
         _page.replace("__LOST_REASONS_JS__", _LOST_REASONS_JS)
         .replace("__MAX_NAME_JS__", str(_MAX_NAME_JS))
@@ -1609,18 +1619,20 @@ DASHBOARD_HTML = _build_dashboard_html("user@example.com")
 
 @app.route("/manifest.json")
 def manifest():
-    return jsonify({
-        "name": "LeadClaw",
-        "short_name": "LeadClaw",
-        "start_url": "/",
-        "display": "standalone",
-        "background_color": "#0f1117",
-        "theme_color": "#6366f1",
-        "icons": [
-            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
-            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
-        ],
-    })
+    return jsonify(
+        {
+            "name": "LeadClaw",
+            "short_name": "LeadClaw",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#0f1117",
+            "theme_color": "#6366f1",
+            "icons": [
+                {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            ],
+        }
+    )
 
 
 @app.route("/")
@@ -1682,6 +1694,7 @@ def route_get_lead(lead_id):
 def route_draft_message(lead_id):
     """Return a copy-ready message for a lead. Pure template, no AI."""
     from leadclaw.drafting import MSG_TYPES, draft_message
+
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
         return jsonify({"error": "Not found"}), 404
@@ -1861,6 +1874,7 @@ def api_complete_lead(lead_id):
 @verified_required
 def api_invoice_lead(lead_id):
     from leadclaw.config import DEFAULT_INVOICE_REMINDER_DAYS
+
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
         return jsonify({"error": "Not found"}), 404
@@ -1873,7 +1887,12 @@ def api_invoice_lead(lead_id):
                 return jsonify({"error": "amount must be > 0"}), 400
         except (ValueError, TypeError):
             return jsonify({"error": "invalid amount"}), 400
-    mark_invoice_sent(lead_id, invoice_amount=amount, reminder_days=DEFAULT_INVOICE_REMINDER_DAYS, user_id=current_user.id)
+    mark_invoice_sent(
+        lead_id,
+        invoice_amount=amount,
+        reminder_days=DEFAULT_INVOICE_REMINDER_DAYS,
+        user_id=current_user.id,
+    )
     return jsonify({"ok": True})
 
 
@@ -1925,7 +1944,9 @@ def api_dismiss_reminder():
     if not lead_id:
         return jsonify({"error": "lead_id is required"}), 400
     if reminder_type not in DISMISSAL_FIELDS:
-        return jsonify({"error": f"reminder_type must be one of: {', '.join(DISMISSAL_FIELDS)}"}), 400
+        return jsonify(
+            {"error": f"reminder_type must be one of: {', '.join(DISMISSAL_FIELDS)}"}
+        ), 400
     lead = get_lead_by_id(int(lead_id), user_id=current_user.id)
     if not lead:
         return jsonify({"error": "Lead not found"}), 404

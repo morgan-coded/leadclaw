@@ -270,9 +270,17 @@ def update_lead(lead_id: int, user_id: Optional[int] = None, **fields):
     If user_id is given, the update is restricted to that user's lead.
     """
     allowed = {
-        "name", "phone", "email", "service", "notes", "follow_up_after",
-        "scheduled_date", "invoice_amount", "next_service_due_at",
-        "invoice_reminder_at", "service_reminder_at",
+        "name",
+        "phone",
+        "email",
+        "service",
+        "notes",
+        "follow_up_after",
+        "scheduled_date",
+        "invoice_amount",
+        "next_service_due_at",
+        "invoice_reminder_at",
+        "service_reminder_at",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -466,7 +474,9 @@ def mark_stale_leads_followup_due() -> int:
 def mark_booked(lead_id: int, scheduled_date: str, user_id: Optional[int] = None):
     """Mark a lead as booked with a scheduled job date."""
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
-    params = (scheduled_date, lead_id, user_id) if user_id is not None else (scheduled_date, lead_id)
+    params = (
+        (scheduled_date, lead_id, user_id) if user_id is not None else (scheduled_date, lead_id)
+    )
     with get_conn() as conn:
         conn.execute(
             f"""
@@ -488,11 +498,14 @@ def mark_completed(lead_id: int, user_id: Optional[int] = None):
     Also auto-fills next_service_due_at based on service type if not already set.
     """
     from leadclaw.service_defaults import get_service_interval
+
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params = (lead_id, user_id) if user_id is not None else (lead_id,)
     with get_conn() as conn:
         # Get service type and current next_service_due_at
-        row = conn.execute("SELECT service, next_service_due_at FROM leads WHERE id = ?", (lead_id,)).fetchone()
+        row = conn.execute(
+            "SELECT service, next_service_due_at FROM leads WHERE id = ?", (lead_id,)
+        ).fetchone()
         service_type = row["service"] if row else ""
         already_set = row["next_service_due_at"] if row else None
         interval = get_service_interval(service_type or "")
@@ -540,7 +553,9 @@ def mark_invoice_sent(
     with get_conn() as conn:
         # Fetch current quote_amount to use as default invoice_amount
         row = conn.execute("SELECT quote_amount FROM leads WHERE id = ?", (lead_id,)).fetchone()
-        amount = invoice_amount if invoice_amount is not None else (row["quote_amount"] if row else None)
+        amount = (
+            invoice_amount if invoice_amount is not None else (row["quote_amount"] if row else None)
+        )
 
         conn.execute(
             f"""
@@ -569,6 +584,7 @@ def mark_paid(
     """
     from leadclaw.config import DEFAULT_RECURRING_DAYS
     from leadclaw.service_defaults import get_service_interval
+
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params_base = (lead_id, user_id) if user_id is not None else (lead_id,)
 
@@ -583,7 +599,11 @@ def mark_paid(
         if recurring_days is not None:
             days = recurring_days
         else:
-            days = get_service_interval(service_type or "") if not already_set else DEFAULT_RECURRING_DAYS
+            days = (
+                get_service_interval(service_type or "")
+                if not already_set
+                else DEFAULT_RECURRING_DAYS
+            )
 
         if already_set:
             # Preserve existing explicit next service date — don't reset it
@@ -626,7 +646,11 @@ def set_next_service(
 ):
     """Manually set or update the next_service_due_at date."""
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
-    params = (next_service_due_at, next_service_due_at, lead_id, user_id) if user_id is not None else (next_service_due_at, next_service_due_at, lead_id)
+    params = (
+        (next_service_due_at, next_service_due_at, lead_id, user_id)
+        if user_id is not None
+        else (next_service_due_at, next_service_due_at, lead_id)
+    )
     with get_conn() as conn:
         conn.execute(
             f"""
@@ -637,8 +661,13 @@ def set_next_service(
             """,
             params,
         )
-        log_event(conn, "next_service_set", user_id=user_id, lead_id=lead_id,
-                  meta={"date": next_service_due_at})
+        log_event(
+            conn,
+            "next_service_set",
+            user_id=user_id,
+            lead_id=lead_id,
+            meta={"date": next_service_due_at},
+        )
 
 
 def get_invoice_reminders(user_id: Optional[int] = None):
@@ -856,8 +885,9 @@ def dismiss_reminder(
         f"UPDATE leads SET {col} = ? {where}",  # noqa: S608 — col is from allowlist
         (value, *params_base),
     )
-    log_event(conn, "reminder_dismissed", user_id=user_id, lead_id=lead_id,
-              meta={"type": reminder_type})
+    log_event(
+        conn, "reminder_dismissed", user_id=user_id, lead_id=lead_id, meta={"type": reminder_type}
+    )
     return cur.rowcount > 0
 
 
