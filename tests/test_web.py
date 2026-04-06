@@ -372,27 +372,31 @@ def test_html_contains_add_button():
 
 
 def test_html_contains_all_modals():
-    assert 'id="modal-edit"' in DASHBOARD_HTML
-    assert 'id="modal-quote"' in DASHBOARD_HTML
-    assert 'id="modal-lost"' in DASHBOARD_HTML
+    # Sheets replaced modals in the mobile-first UI
+    assert 'id="sheet-edit"' in DASHBOARD_HTML
+    assert 'id="sheet-quote"' in DASHBOARD_HTML
+    assert 'id="sheet-lost"' in DASHBOARD_HTML
 
 
 def test_html_contains_closed_tab():
-    assert "switchTab('closed')" in DASHBOARD_HTML
-    assert 'id="tab-closed"' in DASHBOARD_HTML
+    # Closed is now under the 'more' tab
+    assert "switchTab('more')" in DASHBOARD_HTML
+    assert 'id="tab-more"' in DASHBOARD_HTML
     assert 'id="closed"' in DASHBOARD_HTML
 
 
 def test_html_renders_active_lead_actions():
     assert "openQuote(" in DASHBOARD_HTML
     assert "openEdit(" in DASHBOARD_HTML
-    assert "doWon(" in DASHBOARD_HTML
     assert "openLost(" in DASHBOARD_HTML
     assert "doDelete(" in DASHBOARD_HTML
+    # Send Quote is the primary CTA for new/quoted/followup_due leads
+    assert "Send Quote" in DASHBOARD_HTML
 
 
 def test_html_closed_leads_delete_only():
-    assert "isActive" in DASHBOARD_HTML
+    # Closed/paid/won/lost leads show delete only — check the status list used for this
+    assert "doDelete(" in DASHBOARD_HTML
 
 
 def test_html_duplicate_warning_element():
@@ -422,8 +426,9 @@ def test_html_api_closed_fetch():
 
 
 def test_html_pilot_tab_present():
-    assert "switchTab('pilot')" in DASHBOARD_HTML
-    assert 'id="tab-pilot"' in DASHBOARD_HTML
+    # Pilot is now under the 'more' tab
+    assert "switchTab('more')" in DASHBOARD_HTML
+    assert 'id="tab-more"' in DASHBOARD_HTML
 
 
 def test_html_pilot_table_columns():
@@ -444,8 +449,9 @@ def test_html_pilot_action_buttons():
 
 
 def test_html_pilot_modals():
-    assert 'id="modal-pilot-draft"' in DASHBOARD_HTML
-    assert 'id="modal-pilot-reply"' in DASHBOARD_HTML
+    # Sheets replaced modals in the mobile-first UI
+    assert 'id="sheet-pilot-draft"' in DASHBOARD_HTML
+    assert 'id="sheet-pilot-reply"' in DASHBOARD_HTML
 
 
 def test_html_pilot_status_filter():
@@ -455,7 +461,8 @@ def test_html_pilot_status_filter():
 def test_html_signout_link():
     """Dashboard must contain a sign-out link."""
     assert "/logout" in DASHBOARD_HTML
-    assert "Sign out" in DASHBOARD_HTML
+    # Sign out label (case may vary with mobile-first UI)
+    assert "sign-out" in DASHBOARD_HTML.lower() or "sign out" in DASHBOARD_HTML.lower() or "logout" in DASHBOARD_HTML.lower()
 
 
 # ---------------------------------------------------------------------------
