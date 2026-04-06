@@ -418,7 +418,9 @@ def cmd_paid(args):
     if not lead:
         return
     # Pass explicit --recurring if given; otherwise let mark_paid() auto-detect from service type
-    recurring = args.recurring if hasattr(args, "recurring") and args.recurring is not None else None
+    recurring = (
+        args.recurring if hasattr(args, "recurring") and args.recurring is not None else None
+    )
     mark_paid(lead["id"], recurring_days=recurring)
     print(f"[{lead['id']}] {lead['name']} → {_status_label('paid')}. Run: leadclaw reminders")
 
