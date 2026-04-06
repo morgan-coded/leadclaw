@@ -1312,7 +1312,7 @@ def route_pilot_save_draft(cid):
     draft = (body.get("draft") or "").strip()
     if not draft:
         return jsonify({"error": "draft is required"}), 400
-    _pilot.set_draft(cid, draft)
+    _pilot.set_draft(cid, draft, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1327,8 +1327,8 @@ def route_pilot_save_and_approve(cid):
     draft = (body.get("draft") or "").strip()
     if not draft:
         return jsonify({"error": "draft is required"}), 400
-    _pilot.set_draft(cid, draft)
-    _pilot.set_status(cid, "approved")
+    _pilot.set_draft(cid, draft, user_id=current_user.id)
+    _pilot.set_status(cid, "approved", user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1341,7 +1341,7 @@ def route_pilot_approve(cid):
         return jsonify({"error": f"Candidate {cid} not found"}), 404
     if not candidate["outreach_draft"]:
         return jsonify({"error": "No draft to approve. Save a draft first."}), 400
-    _pilot.set_status(cid, "approved")
+    _pilot.set_status(cid, "approved", user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1352,7 +1352,7 @@ def route_pilot_mark_sent(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
         return jsonify({"error": f"Candidate {cid} not found"}), 404
-    _pilot.set_status(cid, "sent", contacted=True)
+    _pilot.set_status(cid, "sent", contacted=True, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1367,7 +1367,7 @@ def route_pilot_log_reply(cid):
     reply = (body.get("reply") or "").strip()
     if not reply:
         return jsonify({"error": "reply text is required"}), 400
-    _pilot.log_reply(cid, reply)
+    _pilot.log_reply(cid, reply, user_id=current_user.id)
     summary = None
     try:
         from leadclaw.drafting import check_api_key, summarize_pilot_reply
@@ -1375,7 +1375,7 @@ def route_pilot_log_reply(cid):
         if check_api_key():
             summary = summarize_pilot_reply(dict(candidate), reply)
             if summary:
-                _pilot.set_reply_summary(cid, summary)
+                _pilot.set_reply_summary(cid, summary, user_id=current_user.id)
     except Exception:
         pass
     return jsonify({"ok": True, "summary": summary})
@@ -1388,7 +1388,7 @@ def route_pilot_convert(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
         return jsonify({"error": f"Candidate {cid} not found"}), 404
-    _pilot.set_status(cid, "converted")
+    _pilot.set_status(cid, "converted", user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1399,7 +1399,7 @@ def route_pilot_pass(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
         return jsonify({"error": f"Candidate {cid} not found"}), 404
-    _pilot.set_status(cid, "passed")
+    _pilot.set_status(cid, "passed", user_id=current_user.id)
     return jsonify({"ok": True})
 
 

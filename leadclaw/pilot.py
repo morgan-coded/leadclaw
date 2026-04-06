@@ -247,7 +247,7 @@ def add_candidate(
     return cid, dupes
 
 
-def update_candidate(cid: int, **fields):
+def update_candidate(cid: int, user_id: Optional[int] = None, **fields):
     allowed = {
         "name",
         "business_name",
@@ -267,50 +267,60 @@ def update_candidate(cid: int, **fields):
         return
     updates["last_updated_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
     set_clause = ", ".join(f"{k} = ?" for k in updates)
+    where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
+    params = (*updates.values(), cid, user_id) if user_id is not None else (*updates.values(), cid)
     with get_conn() as conn:
         conn.execute(
-            f"UPDATE pilot_candidates SET {set_clause} WHERE id = ?",  # noqa: S608
-            (*updates.values(), cid),
+            f"UPDATE pilot_candidates SET {set_clause} {where}",  # noqa: S608
+            params,
         )
 
 
-def set_status(cid: int, status: str, contacted: bool = False):
+def set_status(cid: int, status: str, contacted: bool = False, user_id: Optional[int] = None):
     if status not in STATUSES:
         raise ValueError(f"Invalid status: {status}")
+    uid_clause = " AND user_id = ?" if user_id is not None else ""
+    uid_param = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         if contacted:
             conn.execute(
-                "UPDATE pilot_candidates SET status=?, contacted_at=datetime('now'), last_updated_at=datetime('now') WHERE id=?",
-                (status, cid),
+                f"UPDATE pilot_candidates SET status=?, contacted_at=datetime('now'), last_updated_at=datetime('now') WHERE id=?{uid_clause}",
+                (status, cid, *uid_param),
             )
         else:
             conn.execute(
-                "UPDATE pilot_candidates SET status=?, last_updated_at=datetime('now') WHERE id=?",
-                (status, cid),
+                f"UPDATE pilot_candidates SET status=?, last_updated_at=datetime('now') WHERE id=?{uid_clause}",
+                (status, cid, *uid_param),
             )
 
 
-def set_draft(cid: int, draft: str):
+def set_draft(cid: int, draft: str, user_id: Optional[int] = None):
+    uid_clause = " AND user_id = ?" if user_id is not None else ""
+    uid_param = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         conn.execute(
-            "UPDATE pilot_candidates SET outreach_draft=?, status='drafted', last_updated_at=datetime('now') WHERE id=?",
-            (draft, cid),
+            f"UPDATE pilot_candidates SET outreach_draft=?, status='drafted', last_updated_at=datetime('now') WHERE id=?{uid_clause}",
+            (draft, cid, *uid_param),
         )
 
 
-def log_reply(cid: int, reply_text: str):
+def log_reply(cid: int, reply_text: str, user_id: Optional[int] = None):
+    uid_clause = " AND user_id = ?" if user_id is not None else ""
+    uid_param = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         conn.execute(
-            "UPDATE pilot_candidates SET reply_text=?, status='replied', last_updated_at=datetime('now') WHERE id=?",
-            (reply_text, cid),
+            f"UPDATE pilot_candidates SET reply_text=?, status='replied', last_updated_at=datetime('now') WHERE id=?{uid_clause}",
+            (reply_text, cid, *uid_param),
         )
 
 
-def set_reply_summary(cid: int, summary: str):
+def set_reply_summary(cid: int, summary: str, user_id: Optional[int] = None):
+    uid_clause = " AND user_id = ?" if user_id is not None else ""
+    uid_param = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         conn.execute(
-            "UPDATE pilot_candidates SET reply_summary=?, last_updated_at=datetime('now') WHERE id=?",
-            (summary, cid),
+            f"UPDATE pilot_candidates SET reply_summary=?, last_updated_at=datetime('now') WHERE id=?{uid_clause}",
+            (summary, cid, *uid_param),
         )
 
 
