@@ -353,10 +353,12 @@ def signup():
 
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     token = secrets.token_urlsafe(32)
-    create_user(email, pw_hash, token)
-    _send_verification_email(email, token)
-
-    return render_template_string(CHECK_EMAIL_HTML, email=email)
+    uid = create_user(email, pw_hash, token)
+    # Auto-verify on signup (email delivery blocked on shared IPs; re-enable later)
+    verify_user_email(token)
+    row = get_user_by_id(uid)
+    login_user(User(row))
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/verify/<token>")
