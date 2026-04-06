@@ -28,11 +28,14 @@ from leadclaw.drafting import (
     summarize_pipeline,
 )
 from leadclaw.queries import (
+    DISMISSAL_FIELDS,
     add_lead,
     delete_lead,
+    dismiss_reminder_standalone,
     get_all_active_leads,
     get_all_leads,
     get_closed_summary,
+    get_event_counts,
     get_invoice_reminders,
     get_job_today_leads,
     get_lead_by_id,
@@ -349,11 +352,14 @@ def cmd_quote(args):
 
 
 def cmd_won(args):
+    """Backward-compatible: 'won' is now an alias for 'paid' in the lifecycle.
+    Use 'leadclaw paid' for the preferred command.
+    """
     lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
     mark_won(lead["id"])
-    print(f"[{lead['id']}] {lead['name']} marked as WON")
+    print(f"[{lead['id']}] {lead['name']} marked as WON (tip: use 'paid' for the full lifecycle)")
 
 
 def cmd_lost(args):
@@ -477,6 +483,50 @@ def cmd_reminders(args):
     _print_section("Reactivation — 90 days", react_90)
 
     print(f"\nTip: leadclaw draft-message <name> --type <type>")
+    print(f"Tip: leadclaw dismiss-reminder <name> --type <review_request|reactivation|job_today>")
+
+
+def cmd_dismiss_reminder(args):
+    """Mark a reminder as dismissed/sent for a lead."""
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
+    if not lead:
+        return
+    reminder_type = args.type
+    if reminder_type not in DISMISSAL_FIELDS:
+        print(f"Unknown reminder type '{reminder_type}'. Valid types: {', '.join(DISMISSAL_FIELDS)}")
+        return
+    ok = dismiss_reminder_standalone(lead["id"], reminder_type)
+    if ok:
+        label = {"review_request": "Review request marked sent",
+                 "reactivation": "Reactivation reminder dismissed",
+                 "job_today": "Job reminder dismissed for today"}.get(reminder_type, "Dismissed")
+        print(f"[{lead['id']}] {lead['name']} — {label}.")
+    else:
+        print(f"Could not dismiss reminder (lead not found or no change).")
+
+
+def cmd_usage(args):
+    """Show event counts by type for the last 30 days and all-time."""
+    last30 = get_event_counts(days=30)
+    alltime = get_event_counts()
+
+    alltime_by_type = {row["event_type"]: row["count"] for row in alltime}
+
+    if not alltime:
+        print("No usage events recorded yet.")
+        return
+
+    print("=== Usage Stats ===")
+    print(f"{'Event Type':<25} {'Last 30 Days':>12} {'All Time':>10}")
+    print("-" * 50)
+    last30_by_type = {row["event_type"]: row["count"] for row in last30}
+    for event_type, total in sorted(alltime_by_type.items(), key=lambda x: -x[1]):
+        last_30 = last30_by_type.get(event_type, 0)
+        print(f"{event_type:<25} {last_30:>12} {total:>10}")
+    print("-" * 50)
+    total_all = sum(alltime_by_type.values())
+    total_30 = sum(last30_by_type.values())
+    print(f"{'TOTAL':<25} {total_30:>12} {total_all:>10}")
 
 
 def cmd_draft_message(args):
@@ -779,6 +829,24 @@ def build_parser():
     p_nextsvc.add_argument("--id", type=int)
 
     sub.add_parser("reminders", help="Show all pending reminders (jobs, invoices, reviews, reactivations)")
+
+    p_dismiss = sub.add_parser(
+        "dismiss-reminder",
+        help="Mark a reminder as sent/dismissed for a lead",
+        epilog=(
+            "Types: review_request, reactivation, job_today\n\n"
+            "Examples:\n"
+            "  leadclaw dismiss-reminder Mike --type review_request\n"
+            "  leadclaw dismiss-reminder --id 7 --type reactivation"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_dismiss.add_argument("name", nargs="?", default="")
+    p_dismiss.add_argument("--id", type=int)
+    p_dismiss.add_argument("--type", required=True, dest="type",
+                           help="Reminder type: review_request, reactivation, job_today")
+
+    sub.add_parser("usage", help="Show pilot usage event counts by type")
 
     p_dm = sub.add_parser(
         "draft-message",
@@ -1191,6 +1259,8 @@ COMMAND_MAP = {
     "paid": cmd_paid,
     "next-service": cmd_next_service,
     "reminders": cmd_reminders,
+    "dismiss-reminder": cmd_dismiss_reminder,
+    "usage": cmd_usage,
     "draft-message": cmd_draft_message,
     "draft-followup": cmd_draft,
     "summarize": cmd_summarize,

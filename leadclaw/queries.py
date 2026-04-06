@@ -6,6 +6,7 @@ The allowlist (`allowed` set) prevents SQL injection — only whitelisted column
 can appear in the query. Values are always passed as parameterized bindings.
 """
 
+import json
 from datetime import datetime  # noqa: I001
 from typing import Optional
 
@@ -25,7 +26,7 @@ def get_today_leads(user_id: Optional[int] = None):
             rows = conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('won', 'lost', 'paid')
+                WHERE status NOT IN ('lost', 'paid')
                   AND (date(created_at) = ? OR date(follow_up_after) = ?)
                   AND user_id = ?
                 ORDER BY follow_up_after ASC, created_at ASC
@@ -36,7 +37,7 @@ def get_today_leads(user_id: Optional[int] = None):
             rows = conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('won', 'lost', 'paid')
+                WHERE status NOT IN ('lost', 'paid')
                   AND (date(created_at) = ? OR date(follow_up_after) = ?)
                 ORDER BY follow_up_after ASC, created_at ASC
                 """,
@@ -46,13 +47,13 @@ def get_today_leads(user_id: Optional[int] = None):
 
 
 def get_stale_leads(user_id: Optional[int] = None):
-    """Leads where follow_up_after has passed and status is not won/lost."""
+    """Leads where follow_up_after has passed and status is not won/lost/paid."""
     with get_conn() as conn:
         if user_id is not None:
             rows = conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('won', 'lost', 'paid')
+                WHERE status NOT IN ('lost', 'paid')
                   AND date(follow_up_after) < date('now')
                   AND user_id = ?
                 ORDER BY follow_up_after ASC
@@ -63,7 +64,7 @@ def get_stale_leads(user_id: Optional[int] = None):
             rows = conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('won', 'lost', 'paid')
+                WHERE status NOT IN ('lost', 'paid')
                   AND date(follow_up_after) < date('now')
                 ORDER BY follow_up_after ASC
                 """
@@ -107,7 +108,7 @@ def get_lead_by_id(lead_id: int, user_id: Optional[int] = None):
 
 
 def get_all_active_leads(user_id: Optional[int] = None):
-    """All leads not in won/lost state."""
+    """All leads not in won/lost/paid state."""
     with get_conn() as conn:
         if user_id is not None:
             rows = conn.execute(
@@ -147,18 +148,22 @@ def get_all_leads(limit: int = 200, offset: int = 0, user_id: Optional[int] = No
 
 
 def get_pipeline_summary(user_id: Optional[int] = None):
-    """Return (rows_by_status, totals_row) with open/closed value split."""
+    """Return (rows_by_status, totals_row) with open/closed value split.
+
+    Won is treated as equivalent to paid for reporting purposes.
+    Existing 'won' rows in the DB are counted under the 'paid' bucket.
+    """
     with get_conn() as conn:
         if user_id is not None:
             rows = conn.execute(
                 """
                 SELECT
-                    status,
+                    CASE WHEN status = 'won' THEN 'paid' ELSE status END as status,
                     COUNT(*) as count,
                     COALESCE(SUM(quote_amount), 0) as total_quoted
                 FROM leads
                 WHERE user_id = ?
-                GROUP BY status
+                GROUP BY CASE WHEN status = 'won' THEN 'paid' ELSE status END
                 ORDER BY status
                 """,
                 (user_id,),
@@ -166,8 +171,8 @@ def get_pipeline_summary(user_id: Optional[int] = None):
             totals = conn.execute(
                 """
                 SELECT
-                    COALESCE(SUM(CASE WHEN status NOT IN ('won','lost') THEN quote_amount ELSE 0 END), 0) as open_value,
-                    COALESCE(SUM(CASE WHEN status = 'won'  THEN quote_amount ELSE 0 END), 0) as won_value,
+                    COALESCE(SUM(CASE WHEN status NOT IN ('won','lost','paid') THEN quote_amount ELSE 0 END), 0) as open_value,
+                    COALESCE(SUM(CASE WHEN status IN ('won','paid') THEN quote_amount ELSE 0 END), 0) as won_value,
                     COALESCE(SUM(CASE WHEN status = 'lost' THEN quote_amount ELSE 0 END), 0) as lost_value
                 FROM leads
                 WHERE user_id = ?
@@ -178,19 +183,19 @@ def get_pipeline_summary(user_id: Optional[int] = None):
             rows = conn.execute(
                 """
                 SELECT
-                    status,
+                    CASE WHEN status = 'won' THEN 'paid' ELSE status END as status,
                     COUNT(*) as count,
                     COALESCE(SUM(quote_amount), 0) as total_quoted
                 FROM leads
-                GROUP BY status
+                GROUP BY CASE WHEN status = 'won' THEN 'paid' ELSE status END
                 ORDER BY status
                 """
             ).fetchall()
             totals = conn.execute(
                 """
                 SELECT
-                    COALESCE(SUM(CASE WHEN status NOT IN ('won','lost') THEN quote_amount ELSE 0 END), 0) as open_value,
-                    COALESCE(SUM(CASE WHEN status = 'won'  THEN quote_amount ELSE 0 END), 0) as won_value,
+                    COALESCE(SUM(CASE WHEN status NOT IN ('won','lost','paid') THEN quote_amount ELSE 0 END), 0) as open_value,
+                    COALESCE(SUM(CASE WHEN status IN ('won','paid') THEN quote_amount ELSE 0 END), 0) as won_value,
                     COALESCE(SUM(CASE WHEN status = 'lost' THEN quote_amount ELSE 0 END), 0) as lost_value
                 FROM leads
                 """
@@ -199,13 +204,16 @@ def get_pipeline_summary(user_id: Optional[int] = None):
 
 
 def get_closed_summary():
-    """Won/lost breakdown with loss reasons."""
+    """Paid/won/lost breakdown with loss reasons. 'won' is merged into 'paid' for display."""
     with get_conn() as conn:
         closed = conn.execute(
             """
-            SELECT status, COUNT(*) as count,
-                   COALESCE(SUM(quote_amount), 0) as total
-            FROM leads WHERE status IN ('won', 'lost') GROUP BY status
+            SELECT
+                CASE WHEN status = 'won' THEN 'paid' ELSE status END as status,
+                COUNT(*) as count,
+                COALESCE(SUM(quote_amount), 0) as total
+            FROM leads WHERE status IN ('won', 'lost', 'paid')
+            GROUP BY CASE WHEN status = 'won' THEN 'paid' ELSE status END
             """
         ).fetchall()
         loss_reasons = conn.execute(
@@ -291,6 +299,51 @@ def delete_lead(lead_id: int, user_id: Optional[int] = None):
             conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
 
 
+def log_event(
+    conn,
+    event_type: str,
+    user_id: Optional[int] = None,
+    lead_id: Optional[int] = None,
+    meta: Optional[dict] = None,
+):
+    """Insert a usage event into the event_log table.
+
+    Designed to be called inside an existing connection context.
+    meta is a dict or None; stored as JSON string.
+    """
+    meta_str = json.dumps(meta) if meta is not None else None
+    conn.execute(
+        "INSERT INTO event_log (event_type, user_id, lead_id, meta) VALUES (?, ?, ?, ?)",
+        (event_type, user_id, lead_id, meta_str),
+    )
+
+
+def get_event_counts(days: Optional[int] = None) -> list:
+    """Return event counts by type. Pass days=30 for last 30 days, None for all-time."""
+    with get_conn() as conn:
+        if days is not None:
+            rows = conn.execute(
+                """
+                SELECT event_type, COUNT(*) as count
+                FROM event_log
+                WHERE date(created_at) >= date('now', ? || ' days')
+                GROUP BY event_type
+                ORDER BY count DESC
+                """,
+                (f"-{days}",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT event_type, COUNT(*) as count
+                FROM event_log
+                GROUP BY event_type
+                ORDER BY count DESC
+                """
+            ).fetchall()
+    return rows
+
+
 def update_quote(
     lead_id: int,
     amount: float,
@@ -316,9 +369,13 @@ def update_quote(
             """,
             params,
         )
+        log_event(conn, "quote_sent", user_id=user_id, lead_id=lead_id)
 
 
 def mark_won(lead_id: int, user_id: Optional[int] = None):
+    """Mark a lead as 'won'. In the new lifecycle 'paid' is preferred.
+    'won' is kept for backward-compat but treated as paid in summary queries.
+    """
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params = (lead_id, user_id) if user_id is not None else (lead_id,)
     with get_conn() as conn:
@@ -332,6 +389,7 @@ def mark_won(lead_id: int, user_id: Optional[int] = None):
             """,
             params,
         )
+        log_event(conn, "lead_paid", user_id=user_id, lead_id=lead_id, meta={"via": "won"})
 
 
 def mark_lost(
@@ -422,24 +480,51 @@ def mark_booked(lead_id: int, scheduled_date: str, user_id: Optional[int] = None
             """,
             params,
         )
+        log_event(conn, "lead_booked", user_id=user_id, lead_id=lead_id)
 
 
 def mark_completed(lead_id: int, user_id: Optional[int] = None):
-    """Mark a booked job as completed. Auto-sets review_reminder_at to tomorrow."""
+    """Mark a booked job as completed. Auto-sets review_reminder_at to tomorrow.
+    Also auto-fills next_service_due_at based on service type if not already set.
+    """
+    from leadclaw.service_defaults import get_service_interval
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params = (lead_id, user_id) if user_id is not None else (lead_id,)
     with get_conn() as conn:
-        conn.execute(
-            f"""
-            UPDATE leads
-            SET status = 'completed',
-                completed_at = datetime('now'),
-                last_contact_at = datetime('now'),
-                review_reminder_at = date('now', '+1 days')
-            {where}
-            """,
-            params,
-        )
+        # Get service type and current next_service_due_at
+        row = conn.execute("SELECT service, next_service_due_at FROM leads WHERE id = ?", (lead_id,)).fetchone()
+        service_type = row["service"] if row else ""
+        already_set = row["next_service_due_at"] if row else None
+        interval = get_service_interval(service_type or "")
+
+        if already_set:
+            # Preserve existing explicit next service date
+            conn.execute(
+                f"""
+                UPDATE leads
+                SET status = 'completed',
+                    completed_at = datetime('now'),
+                    last_contact_at = datetime('now'),
+                    review_reminder_at = date('now', '+1 days')
+                {where}
+                """,
+                params,
+            )
+        else:
+            conn.execute(
+                f"""
+                UPDATE leads
+                SET status = 'completed',
+                    completed_at = datetime('now'),
+                    last_contact_at = datetime('now'),
+                    review_reminder_at = date('now', '+1 days'),
+                    next_service_due_at = date('now', '+{interval} days'),
+                    service_reminder_at = date('now', '+{interval} days')
+                {where}
+                """,
+                params,
+            )
+        log_event(conn, "lead_completed", user_id=user_id, lead_id=lead_id)
 
 
 def mark_invoice_sent(
@@ -468,6 +553,7 @@ def mark_invoice_sent(
             """,
             (amount, *params_base),
         )
+        log_event(conn, "invoice_sent", user_id=user_id, lead_id=lead_id)
 
 
 def mark_paid(
@@ -477,30 +563,60 @@ def mark_paid(
 ):
     """Mark a lead as paid. Optionally schedule a recurring service reminder.
 
-    Also sets review_reminder_at to tomorrow if not already set (COALESCE preserves
-    any value set by mark_completed so a future dismiss action won't lose it).
+    Auto-sets next_service_due_at from service type intervals if not already set.
+    Does NOT override an existing explicit next_service_due_at.
+    Also sets review_reminder_at to tomorrow if not already set.
     """
     from leadclaw.config import DEFAULT_RECURRING_DAYS
+    from leadclaw.service_defaults import get_service_interval
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params_base = (lead_id, user_id) if user_id is not None else (lead_id,)
-    days = recurring_days if recurring_days is not None else DEFAULT_RECURRING_DAYS
 
     with get_conn() as conn:
-        conn.execute(
-            f"""
-            UPDATE leads
-            SET status = 'paid',
-                paid_at = datetime('now'),
-                invoice_reminder_at = NULL,
-                next_service_due_at = date('now', '+{days} days'),
-                service_reminder_at = date('now', '+{days} days'),
-                last_contact_at = datetime('now'),
-                follow_up_after = NULL,
-                review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
-            {where}
-            """,
-            params_base,
-        )
+        # Determine interval: explicit arg > service-type default > config default
+        row = conn.execute(
+            "SELECT service, next_service_due_at FROM leads WHERE id = ?", (lead_id,)
+        ).fetchone()
+        already_set = row["next_service_due_at"] if row else None
+        service_type = row["service"] if row else ""
+
+        if recurring_days is not None:
+            days = recurring_days
+        else:
+            days = get_service_interval(service_type or "") if not already_set else DEFAULT_RECURRING_DAYS
+
+        if already_set:
+            # Preserve existing explicit next service date — don't reset it
+            conn.execute(
+                f"""
+                UPDATE leads
+                SET status = 'paid',
+                    paid_at = datetime('now'),
+                    invoice_reminder_at = NULL,
+                    last_contact_at = datetime('now'),
+                    follow_up_after = NULL,
+                    review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
+                {where}
+                """,
+                params_base,
+            )
+        else:
+            conn.execute(
+                f"""
+                UPDATE leads
+                SET status = 'paid',
+                    paid_at = datetime('now'),
+                    invoice_reminder_at = NULL,
+                    next_service_due_at = date('now', '+{days} days'),
+                    service_reminder_at = date('now', '+{days} days'),
+                    last_contact_at = datetime('now'),
+                    follow_up_after = NULL,
+                    review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
+                {where}
+                """,
+                params_base,
+            )
+        log_event(conn, "lead_paid", user_id=user_id, lead_id=lead_id)
 
 
 def set_next_service(
@@ -521,6 +637,8 @@ def set_next_service(
             """,
             params,
         )
+        log_event(conn, "next_service_set", user_id=user_id, lead_id=lead_id,
+                  meta={"date": next_service_due_at})
 
 
 def get_invoice_reminders(user_id: Optional[int] = None):
@@ -530,7 +648,7 @@ def get_invoice_reminders(user_id: Optional[int] = None):
             return conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('paid', 'lost')
+                WHERE status NOT IN ('paid', 'won', 'lost')
                   AND invoice_reminder_at IS NOT NULL
                   AND date(invoice_reminder_at) <= date('now')
                   AND user_id = ?
@@ -541,7 +659,7 @@ def get_invoice_reminders(user_id: Optional[int] = None):
         return conn.execute(
             """
             SELECT * FROM leads
-            WHERE status NOT IN ('paid', 'lost')
+            WHERE status NOT IN ('paid', 'won', 'lost')
               AND invoice_reminder_at IS NOT NULL
               AND date(invoice_reminder_at) <= date('now')
             ORDER BY invoice_reminder_at ASC
@@ -550,7 +668,7 @@ def get_invoice_reminders(user_id: Optional[int] = None):
 
 
 def get_job_today_leads(user_id: Optional[int] = None):
-    """Booked leads with scheduled_date = today."""
+    """Booked leads with scheduled_date = today (not dismissed for today)."""
     today = datetime.now().strftime("%Y-%m-%d")
     with get_conn() as conn:
         if user_id is not None:
@@ -559,27 +677,28 @@ def get_job_today_leads(user_id: Optional[int] = None):
                 SELECT * FROM leads
                 WHERE status = 'booked'
                   AND date(scheduled_date) = ?
+                  AND (job_reminder_dismissed_at IS NULL OR job_reminder_dismissed_at != ?)
                   AND user_id = ?
                 ORDER BY scheduled_date ASC
                 """,
-                (today, user_id),
+                (today, today, user_id),
             ).fetchall()
         return conn.execute(
             """
             SELECT * FROM leads
             WHERE status = 'booked'
               AND date(scheduled_date) = ?
+              AND (job_reminder_dismissed_at IS NULL OR job_reminder_dismissed_at != ?)
             ORDER BY scheduled_date ASC
             """,
-            (today,),
+            (today, today),
         ).fetchall()
 
 
 def get_review_reminders(user_id: Optional[int] = None):
-    """Leads where review_reminder_at is today or past.
+    """Leads where review_reminder_at is today or past, and review not yet sent.
 
-    Column is intentionally kept non-null-cleared so a future dismiss action
-    can simply set review_reminder_at = NULL to suppress the reminder.
+    review_request_sent_at being set indicates the review was already requested — exclude those.
     """
     with get_conn() as conn:
         if user_id is not None:
@@ -588,6 +707,7 @@ def get_review_reminders(user_id: Optional[int] = None):
                 SELECT * FROM leads
                 WHERE review_reminder_at IS NOT NULL
                   AND date(review_reminder_at) <= date('now')
+                  AND review_request_sent_at IS NULL
                   AND user_id = ?
                 ORDER BY review_reminder_at ASC
                 """,
@@ -598,6 +718,7 @@ def get_review_reminders(user_id: Optional[int] = None):
             SELECT * FROM leads
             WHERE review_reminder_at IS NOT NULL
               AND date(review_reminder_at) <= date('now')
+              AND review_request_sent_at IS NULL
             ORDER BY review_reminder_at ASC
             """
         ).fetchall()
@@ -606,7 +727,7 @@ def get_review_reminders(user_id: Optional[int] = None):
 def get_reactivation_leads(days: int, user_id: Optional[int] = None):
     """
     Leads in pre-job statuses (new, quoted, followup_due) with no last_contact_at
-    activity in the given range.
+    activity in the given range. Excludes dismissed reactivations.
 
     Bucket ranges (non-overlapping):
       days=30  → last_contact_at is 30-59 days ago
@@ -633,6 +754,7 @@ def get_reactivation_leads(days: int, user_id: Optional[int] = None):
                   AND last_contact_at IS NOT NULL
                   AND date(last_contact_at) <= date('now', ? || ' days')
                   {upper_clause}
+                  AND reactivation_dismissed_at IS NULL
                   AND user_id = ?
                 ORDER BY last_contact_at ASC
                 """,
@@ -645,6 +767,7 @@ def get_reactivation_leads(days: int, user_id: Optional[int] = None):
               AND last_contact_at IS NOT NULL
               AND date(last_contact_at) <= date('now', ? || ' days')
               {upper_clause}
+              AND reactivation_dismissed_at IS NULL
             ORDER BY last_contact_at ASC
             """,
             (lower, *upper_params),
@@ -689,3 +812,60 @@ def get_service_reminders(user_id: Optional[int] = None):
             ORDER BY service_reminder_at ASC
             """
         ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Reminder dismissal
+# ---------------------------------------------------------------------------
+
+DISMISSAL_FIELDS = {
+    "review_request": "review_request_sent_at",
+    "reactivation": "reactivation_dismissed_at",
+    "job_today": "job_reminder_dismissed_at",
+}
+
+
+def dismiss_reminder(
+    conn,
+    lead_id: int,
+    reminder_type: str,
+    user_id: Optional[int] = None,
+) -> bool:
+    """Set the dismissal timestamp for a reminder type on a lead.
+
+    reminder_type must be one of: review_request, reactivation, job_today.
+    For job_today, stores the date string (YYYY-MM-DD) so it resets daily.
+    Returns True if the lead was found and updated, False otherwise.
+
+    Designed to be called inside an existing connection context.
+    """
+    col = DISMISSAL_FIELDS.get(reminder_type)
+    if not col:
+        return False
+
+    where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
+    params_base = (lead_id, user_id) if user_id is not None else (lead_id,)
+
+    if reminder_type == "job_today":
+        # Store current date so the dismissal resets the next day
+        value = datetime.now().strftime("%Y-%m-%d")
+    else:
+        value = datetime.now().isoformat()
+
+    cur = conn.execute(
+        f"UPDATE leads SET {col} = ? {where}",  # noqa: S608 — col is from allowlist
+        (value, *params_base),
+    )
+    log_event(conn, "reminder_dismissed", user_id=user_id, lead_id=lead_id,
+              meta={"type": reminder_type})
+    return cur.rowcount > 0
+
+
+def dismiss_reminder_standalone(
+    lead_id: int,
+    reminder_type: str,
+    user_id: Optional[int] = None,
+) -> bool:
+    """Standalone version of dismiss_reminder that opens its own connection."""
+    with get_conn() as conn:
+        return dismiss_reminder(conn, lead_id, reminder_type, user_id=user_id)

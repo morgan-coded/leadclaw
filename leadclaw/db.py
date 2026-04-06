@@ -119,6 +119,10 @@ def init_db():
             "invoice_reminder_at TEXT",
             "service_reminder_at TEXT",
             "review_reminder_at TEXT",
+            # Feature: reminder dismissal
+            "review_request_sent_at TEXT",
+            "reactivation_dismissed_at TEXT",
+            "job_reminder_dismissed_at TEXT",
         ]
         for col_def in new_columns:
             col_name = col_def.split()[0]
@@ -160,6 +164,26 @@ def init_db():
         except sqlite3.OperationalError as e:
             if "already exists" not in str(e).lower():
                 raise
+
+        # --- Event log table for pilot usage tracking ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS event_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                user_id INTEGER,
+                lead_id INTEGER,
+                meta TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_event_log_type ON event_log(event_type)")
+        except Exception:
+            pass
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at)")
+        except Exception:
+            pass
 
         # Ensure the default CLI user (id=1) exists so FK DEFAULT 1 is always valid
         conn.execute(

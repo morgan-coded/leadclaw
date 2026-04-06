@@ -67,10 +67,13 @@ from leadclaw.db import (
     verify_user_email,
 )
 from leadclaw.queries import (
+    DISMISSAL_FIELDS,
     add_lead,
     delete_lead,
+    dismiss_reminder_standalone,
     get_all_active_leads,
     get_all_leads,
+    get_event_counts,
     get_invoice_reminders,
     get_job_today_leads,
     get_lead_by_id,
@@ -530,8 +533,18 @@ def api_summary(user_id: int) -> dict:
 
 def api_closed(user_id: int) -> dict:
     all_leads = get_all_leads(limit=10000, user_id=user_id)
-    closed = [_lead_to_dict(r) for r in all_leads if r["status"] in ("won", "lost")]
+    # Treat 'won' as 'paid' for display purposes
+    closed = [_lead_to_dict(r) for r in all_leads if r["status"] in ("won", "lost", "paid")]
     return {"closed": closed}
+
+
+def api_usage() -> dict:
+    last30 = get_event_counts(days=30)
+    alltime = get_event_counts()
+    return {
+        "last_30_days": [{"event_type": r["event_type"], "count": r["count"]} for r in last30],
+        "all_time": [{"event_type": r["event_type"], "count": r["count"]} for r in alltime],
+    }
 
 
 def api_pilot_candidates(user_id: int, status: str = None) -> dict:
@@ -670,6 +683,17 @@ def _build_dashboard_html(user_email: str) -> str:
   .pilot-card-sub{font-size:12px;color:var(--muted);margin-bottom:8px;}
   .pilot-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
   .pilot-actions .btn{flex:1;min-width:0;font-size:11px;}
+  .reminder-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;}
+  .reminder-card-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;}
+  .reminder-card-name{font-size:17px;font-weight:600;}
+  .reminder-card-sub{font-size:13px;color:var(--muted);margin-bottom:10px;}
+  .reminder-btns{display:flex;gap:8px;flex-wrap:wrap;}
+  .reminder-btns .btn{flex:1;min-width:0;min-height:44px;}
+  .btn-dismiss{color:var(--muted)!important;font-size:12px;min-height:40px!important;padding:6px 12px!important;}
+  .usage-table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;}
+  .usage-table th{text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);border-bottom:1px solid var(--border);}
+  .usage-table td{padding:10px;border-bottom:1px solid var(--border);}
+  .usage-table tr:last-child td{border-bottom:none;}
   @media(min-width:768px){
     body{padding-bottom:0;}
     header{padding:14px 24px;}
@@ -714,8 +738,9 @@ def _build_dashboard_html(user_email: str) -> str:
   <button class="nav-item" id="nav-pipeline" onclick="switchTab('pipeline')">
     <span class="nav-icon">&#x1F500;</span>Pipeline
   </button>
-  <button class="nav-item" id="nav-reminders" onclick="switchTab('reminders')">
+  <button class="nav-item" id="nav-reminders" onclick="switchTab('reminders')" style="position:relative">
     <span class="nav-icon">&#x1F514;</span>Reminders
+    <span id="reminders-badge" style="display:none;position:absolute;top:6px;right:calc(50% - 18px);background:var(--red);color:#fff;font-size:9px;font-weight:700;border-radius:8px;padding:1px 5px;"></span>
   </button>
   <button class="nav-item" id="nav-more" onclick="switchTab('more')">
     <span class="nav-icon">&#x2630;</span>More
@@ -762,6 +787,10 @@ def _build_dashboard_html(user_email: str) -> str:
       </div>
       <div id="pilot-followup-banner" class="warn-banner" style="display:none;margin-bottom:14px"></div>
       <div class="pilot-card-list" id="pilot-card-list"></div>
+    </section>
+    <section>
+      <h2>&#x1F4CA; Usage</h2>
+      <div id="usage-section"><div class="empty">Loading...</div></div>
       <div class="pilot-table-wrap" id="pilot-table-wrap">
         <table id="pilot-table" style="width:100%;border-collapse:collapse;font-size:13px">
           <thead>
@@ -945,7 +974,7 @@ function switchTab(name){
   const stale=!_lastLoaded[name]||now-_lastLoaded[name]>30000;
   if(stale){
     if(name==='today'||name==='pipeline'||name==='reminders')load();
-    if(name==='more'){loadClosed();loadPilot();}
+    if(name==='more'){loadClosed();loadPilot();loadUsage();}
     _lastLoaded[name]=now;
   }
 }
@@ -1058,7 +1087,7 @@ async function load(){
     const p=d.pipeline,b=p.by_status||{};
     const pills=[
       {val:fmt(p.open_value),lbl:'Pipeline',cls:'accent'},
-      {val:fmt(p.won_value),lbl:'Won',cls:'green'},
+      {val:fmt(p.won_value),lbl:'Paid',cls:'green'},
       {val:fmt(p.lost_value),lbl:'Lost',cls:'red'},
       {val:(b.followup_due||{count:0}).count,lbl:'Follow-up Due',cls:'yellow'},
       {val:(b.new||{count:0}).count,lbl:'New',cls:''},
@@ -1071,33 +1100,42 @@ async function load(){
     renderList('today',d.today,{emptyMsg:"You\u2019re all caught up 🎉"});
     renderList('stale',d.stale,{emptyMsg:"You\u2019re all caught up 🎉"});
     renderList('active',d.active,{emptyMsg:'No active leads.'});
-    renderList('remind-stale',d.stale,{emptyMsg:'No overdue follow-ups.'});
     const ir=d.invoice_reminders||[];
     const sr=d.service_reminders||[];
-    renderList('invoice-reminders',ir,{emptyMsg:'No overdue invoices.'});
-    renderList('service-reminders',sr,{emptyMsg:'No recurring service due.'});
 
-    // Jobs today
+    // Jobs today with dismiss
     renderRemSection('jobs-today',d.job_today||[],[
       {label:'On My Way',type:'on_my_way',cls:'btn-primary'},
       {label:'Running Late',type:'running_late',cls:''}
-    ],'No jobs today.');
+    ],'No jobs today.','job_today');
 
-    // Review requests
+    // Invoice reminders
+    renderList('invoice-reminders',ir,{emptyMsg:'No overdue invoices.'});
+
+    // Review requests with dismiss
     renderRemSection('review-reminders',d.review_reminders||[],[
       {label:'Copy Review Request',type:'review_request',cls:'btn-primary'}
-    ],'No review requests due.');
+    ],'No review requests due.','review_request');
 
-    // Reactivation buckets
+    // Recurring service
+    renderList('service-reminders',sr,{emptyMsg:'No recurring service due.'});
+
+    // Reactivation buckets with dismiss
     renderRemSection('reactivation-30',d.reactivation_30||[],[
       {label:'Copy Message',type:'reactivation_30',cls:''}
-    ],'None.');
+    ],'None.','reactivation');
     renderRemSection('reactivation-60',d.reactivation_60||[],[
       {label:'Copy Message',type:'reactivation_60',cls:''}
-    ],'None.');
+    ],'None.','reactivation');
     renderRemSection('reactivation-90',d.reactivation_90||[],[
       {label:'Copy Message',type:'reactivation_90',cls:''}
-    ],'None.');
+    ],'None.','reactivation');
+
+    // Reminders badge
+    const reminderCount=(d.job_today||[]).length+(ir||[]).length+(d.review_reminders||[]).length
+      +(sr||[]).length+(d.reactivation_30||[]).length+(d.reactivation_60||[]).length+(d.reactivation_90||[]).length;
+    const rem_badge=document.getElementById('reminders-badge');
+    if(rem_badge){rem_badge.textContent=reminderCount>0?String(reminderCount):'';rem_badge.style.display=reminderCount>0?'':'none';}
 
     _lastLoaded['today']=_lastLoaded['pipeline']=_lastLoaded['reminders']=Date.now();
   }catch(e){console.error(e);}
@@ -1133,22 +1171,47 @@ async function copyMessage(lead,msgType){
   }
 }
 
-// Render a reminders section with copy-message buttons
-function renderRemSection(containerId,leads,buttons,emptyMsg){
+// Dismiss a reminder via API
+async function dismissReminder(leadId,reminderType,el){
+  try{
+    const r=await fetch('/api/reminders/dismiss',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lead_id:leadId,reminder_type:reminderType})
+    });
+    if(r.ok){
+      const card=el.closest('[data-id]');
+      if(card){card.style.transition='opacity .3s';card.style.opacity='0.3';card.style.pointerEvents='none';}
+      toast('Reminder dismissed.');
+      setTimeout(()=>load(),700);
+    }else{toast('Error dismissing',true);}
+  }catch(e){toast('Error',true);}
+}
+
+// Render a reminders section with copy-message + optional dismiss buttons
+function renderRemSection(containerId,leads,buttons,emptyMsg,dismissType){
   const el=document.getElementById(containerId);
   if(!el)return;
   if(!leads||!leads.length){el.innerHTML='<div class="empty">'+(emptyMsg||'None.')+'</div>';return;}
   el.innerHTML=leads.map(function(l){
     const lj=esc(JSON.stringify(l));
     const btns=buttons.map(function(b){
-      return '<button class="btn btn-sm '+(b.cls||'')+'" onclick=\'copyMessage(JSON.parse(this.dataset.l),"'+b.type+'")\' data-l="'+lj+'">'+esc(b.label)+'</button>';
+      const cls=b.cls?(' '+b.cls):'';
+      return '<button class="btn btn-sm'+cls+'" onclick="copyMessage(JSON.parse(this.dataset.l),\''+b.type+'\')" data-l="'+lj+'">'+esc(b.label)+'</button>';
     }).join('');
-    return '<div class="lead" data-id="'+l.id+'" data-status="'+l.status+'">'
-      +'<div class="lead-card-body">'
-      +'<div class="lead-header"><div><div class="lead-name">'+esc(l.name)+'</div></div>'+badge(l.status)+'</div>'
-      +'<div class="lead-sub">'+esc(l.service||'')+'</div>'
-      +'<div class="lead-secondary-row" style="margin-top:8px">'+btns+'</div>'
-      +'</div>'
+    const dismissBtn=dismissType
+      ?'<button class="btn btn-sm btn-dismiss" onclick="dismissReminder('+l.id+',\''+dismissType+'\',this)">Dismiss</button>'
+      :'';
+    const metaParts=[];
+    if(l.scheduled_date)metaParts.push('Scheduled: '+l.scheduled_date);
+    if(l.next_service_due_at)metaParts.push('Next svc: '+l.next_service_due_at);
+    const metaHtml=metaParts.length?'<div style="font-size:13px;color:var(--muted);margin-bottom:8px">'+metaParts.map(function(m){return esc(m);}).join(' \u00b7 ')+'</div>':'';
+    return '<div class="reminder-card" data-id="'+l.id+'" data-status="'+l.status+'">'
+      +'<div class="reminder-card-header"><div>'
+      +'<div class="reminder-card-name">'+esc(l.name)+'</div>'
+      +'<div class="reminder-card-sub">'+esc(l.service||'')+(l.phone?' \u00b7 '+esc(l.phone):'')+'</div>'
+      +'</div>'+badge(l.status)+'</div>'
+      +metaHtml
+      +'<div class="reminder-btns">'+btns+dismissBtn+'</div>'
       +'</div>';
   }).join('');
 }
@@ -1158,6 +1221,26 @@ async function loadClosed(){
     const d=await fetch('/api/closed').then(r=>r.json());
     renderList('closed',d.closed,{emptyMsg:'No closed leads yet.'});
   }catch(e){document.getElementById('closed').innerHTML='<div class="empty">Error loading.</div>';}
+}
+
+async function loadUsage(){
+  const el=document.getElementById('usage-section');
+  if(!el)return;
+  try{
+    const d=await fetch('/api/usage').then(r=>r.json());
+    const last30=d.last_30_days||[];
+    const alltime=d.all_time||[];
+    const atMap={};alltime.forEach(function(r){atMap[r.event_type]=r.count;});
+    const l30Map={};last30.forEach(function(r){l30Map[r.event_type]=r.count;});
+    const typeArr=[...new Set([...alltime.map(function(r){return r.event_type;}),...last30.map(function(r){return r.event_type;})])].sort();
+    if(!typeArr.length){el.innerHTML='<div class="empty">No events yet.</div>';return;}
+    let html='<table class="usage-table"><thead><tr><th>Event</th><th>Last 30 Days</th><th>All Time</th></tr></thead><tbody>';
+    typeArr.forEach(function(t){
+      html+='<tr><td>'+esc(t.replace(/_/g,' '))+'</td><td>'+(l30Map[t]||0)+'</td><td>'+(atMap[t]||0)+'</td></tr>';
+    });
+    html+='</tbody></table>';
+    el.innerHTML=html;
+  }catch(e){el.innerHTML='<div class="empty">Error loading usage.</div>';}
 }
 
 // Follow Up Tomorrow
@@ -1826,6 +1909,41 @@ def api_next_service(lead_id):
         return jsonify({"error": "next_service_due_at required (YYYY-MM-DD)"}), 400
     set_next_service(lead_id, date_val, user_id=current_user.id)
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Reminder dismissal + usage endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/reminders/dismiss", methods=["POST"])
+@login_required
+@verified_required
+def api_dismiss_reminder():
+    data = request.get_json(silent=True) or {}
+    lead_id = data.get("lead_id")
+    reminder_type = (data.get("reminder_type") or "").strip()
+    if not lead_id:
+        return jsonify({"error": "lead_id is required"}), 400
+    if reminder_type not in DISMISSAL_FIELDS:
+        return jsonify({"error": f"reminder_type must be one of: {', '.join(DISMISSAL_FIELDS)}"}), 400
+    lead = get_lead_by_id(int(lead_id), user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": "Lead not found"}), 404
+    ok = dismiss_reminder_standalone(lead["id"], reminder_type, user_id=current_user.id)
+    if not ok:
+        return jsonify({"error": "Could not dismiss reminder"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/usage")
+@login_required
+@verified_required
+def route_api_usage():
+    try:
+        return jsonify(api_usage())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ---------------------------------------------------------------------------
