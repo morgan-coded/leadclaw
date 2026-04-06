@@ -108,6 +108,7 @@ def init_db():
         # Note: SQLite cannot ALTER a CHECK constraint on existing tables.
         # App-level validation handles new statuses for existing DBs.
         # New installs get the full CHECK from the CREATE TABLE above.
+        # review_reminder_at is already in the CREATE TABLE above; omitted here.
         new_columns = [
             "scheduled_date TEXT",
             "booked_at TEXT",
@@ -118,8 +119,6 @@ def init_db():
             "next_service_due_at TEXT",
             "invoice_reminder_at TEXT",
             "service_reminder_at TEXT",
-            "review_reminder_at TEXT",
-            # Feature: reminder dismissal
             "review_request_sent_at TEXT",
             "reactivation_dismissed_at TEXT",
             "job_reminder_dismissed_at TEXT",
@@ -177,13 +176,13 @@ def init_db():
         """)
         try:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_event_log_type ON event_log(event_type)")
-        except Exception:
+        except sqlite3.OperationalError:
             pass
         try:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at)"
             )
-        except Exception:
+        except sqlite3.OperationalError:
             pass
 
         # Ensure the default CLI user (id=1) exists so FK DEFAULT 1 is always valid

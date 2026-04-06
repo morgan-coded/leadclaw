@@ -16,6 +16,7 @@ from leadclaw.config import (
     MAX_LIST_ROWS,
     MAX_NAME_LENGTH,
     STATUS_LABELS,
+    STATUS_LABELS_PLAIN,
 )
 from leadclaw.drafting import (
     MSG_TYPES,
@@ -59,19 +60,8 @@ from leadclaw.queries import (
     update_quote,
 )
 
-# Runtime flag — set by build_parser() based on --plain
+# Runtime flag — set by main() based on --plain
 _PLAIN = False
-
-STATUS_LABELS_PLAIN = {
-    "new": "[new]",
-    "quoted": "[quoted]",
-    "followup_due": "[followup_due]",
-    "booked": "[booked]",
-    "completed": "[completed]",
-    "paid": "[paid]",
-    "won": "[won]",
-    "lost": "[lost]",
-}
 
 
 def _status_label(status: str) -> str:
@@ -427,15 +417,10 @@ def cmd_paid(args):
     lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
     if not lead:
         return
-    from leadclaw.config import DEFAULT_RECURRING_DAYS
-
-    recurring = (
-        args.recurring
-        if hasattr(args, "recurring") and args.recurring is not None
-        else DEFAULT_RECURRING_DAYS
-    )
+    # Pass explicit --recurring if given; otherwise let mark_paid() auto-detect from service type
+    recurring = args.recurring if hasattr(args, "recurring") and args.recurring is not None else None
     mark_paid(lead["id"], recurring_days=recurring)
-    print(f"[{lead['id']}] {lead['name']} → PAID 💰. Next service reminder in {recurring} days.")
+    print(f"[{lead['id']}] {lead['name']} → {_status_label('paid')}. Run: leadclaw reminders")
 
 
 def cmd_next_service(args):

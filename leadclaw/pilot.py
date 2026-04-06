@@ -32,6 +32,8 @@ _SERVICE_TYPE_SCORES = {
     "flooring": 60,
 }
 
+# Pilot outreach follow-up window — intentionally longer than the lead follow-up (3 days)
+# because pilot candidates are cold outreach, not warm inbound leads
 DEFAULT_FOLLOWUP_DAYS = 4
 
 
