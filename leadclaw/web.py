@@ -125,7 +125,7 @@ def _notify_from_email() -> str:
 # ---------------------------------------------------------------------------
 
 _REQUEST_THROTTLE: dict = defaultdict(list)  # ip -> [timestamp, ...]
-_REQUEST_THROTTLE_LIMIT = 5   # max submissions per window
+_REQUEST_THROTTLE_LIMIT = 5  # max submissions per window
 _REQUEST_THROTTLE_WINDOW = 3600  # 1 hour in seconds
 _REQUEST_MIN_SECONDS = 3  # minimum seconds to fill out the form
 
@@ -454,7 +454,8 @@ _REQUEST_FORM_HTML = (
     "<div class='form-group'><label>Notes (optional)</label>"
     "<textarea name='notes' placeholder='Any extra details...'>{{ notes|default(\"\") }}</textarea></div>"
     # Hidden timestamp for min-time anti-spam
-    "<input type='hidden' name='_form_ts' value='{{ form_ts|default("") }}'>"
+    "<input type='hidden' name='_form_ts' value='{{ form_ts|default("
+    ") }}'>"
     # Honeypot: hidden from real users, bots fill it in
     "<div style='display:none' aria-hidden='true'><label>Website</label>"
     "<input type='text' name='_hp_website' autocomplete='off' tabindex='-1'></div>"
@@ -603,7 +604,9 @@ def public_request():
         pass
 
     # 3. Per-IP rate limit
-    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    client_ip = (
+        request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    )
     if _is_throttled(client_ip):
         return render_template_string(
             _REQUEST_FORM_HTML,

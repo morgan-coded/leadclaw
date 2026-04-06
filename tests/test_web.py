@@ -855,6 +855,7 @@ class TestPublicRequest:
 # Anti-spam tests for /request
 # ---------------------------------------------------------------------------
 
+
 class TestPublicRequestAntiSpam:
     """Tests for honeypot, min-time, and rate-limit protections on /request."""
 
@@ -862,6 +863,7 @@ class TestPublicRequestAntiSpam:
     def clear_throttle(self):
         """Reset rate-limit state before/after each test to prevent cross-test pollution."""
         from leadclaw.web import _REQUEST_THROTTLE
+
         _REQUEST_THROTTLE.clear()
         yield
         _REQUEST_THROTTLE.clear()
@@ -876,15 +878,14 @@ class TestPublicRequestAntiSpam:
     def test_honeypot_filled_returns_success_without_storing(self, client):
         """If honeypot field is filled, silently return success but don't save lead."""
         import sqlite3
+
         data = {**self._VALID, "_hp_website": "http://spam.example.com"}
         r = client.post("/request", data=data, follow_redirects=True)
         # Should silently "succeed" (no error to tip off bots)
         assert r.status_code == 200
         # No lead should be saved
         conn = sqlite3.connect(os.environ["LEADCLAW_DB"])
-        row = conn.execute(
-            "SELECT * FROM leads WHERE name = ?", ("Spam Test User",)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM leads WHERE name = ?", ("Spam Test User",)).fetchone()
         conn.close()
         assert row is None
 
@@ -909,6 +910,7 @@ class TestPublicRequestAntiSpam:
     def test_min_time_check_rejects_instant_submission(self, client):
         """Submission with _form_ts set to 'now' (elapsed < 3s) should be rejected."""
         import time
+
         data = {**self._VALID, "_form_ts": str(int(time.time()))}
         r = client.post("/request", data=data)
         # Should return an error (422 or re-render form with error message)
@@ -918,6 +920,7 @@ class TestPublicRequestAntiSpam:
     def test_min_time_check_allows_old_timestamp(self, client):
         """Submission with _form_ts set to 10 seconds ago should be allowed."""
         import time
+
         data = {**self._VALID, "_form_ts": str(int(time.time()) - 10)}
         r = client.post("/request", data=data, follow_redirects=True)
         assert r.status_code == 200
@@ -933,6 +936,7 @@ class TestPublicRequestAntiSpam:
     def test_rate_limit_blocks_after_threshold(self, client):
         """Same IP submitting more than the limit in one window gets a 429."""
         import time
+
         from leadclaw.web import _REQUEST_THROTTLE, _REQUEST_THROTTLE_LIMIT
 
         # Clear any existing throttle state for this IP
@@ -954,6 +958,7 @@ class TestPublicRequestAntiSpam:
     def test_rate_limit_does_not_block_under_threshold(self, client):
         """Submissions under the rate limit should always succeed."""
         import time
+
         from leadclaw.web import _REQUEST_THROTTLE, _REQUEST_THROTTLE_LIMIT
 
         _REQUEST_THROTTLE.clear()
