@@ -95,6 +95,8 @@ if not _SECRET_KEY:
 
 app = Flask(__name__)
 app.secret_key = _SECRET_KEY
+app.config["SESSION_COOKIE_SECURE"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -1226,7 +1228,7 @@ def route_edit_lead(lead_id):
             if field == "follow_up_after" and not _valid_date(val):
                 return jsonify({"error": "follow_up_after must be YYYY-MM-DD"}), 400
             fields[field] = val
-    update_lead(lead_id, **fields)
+    update_lead(lead_id, user_id=current_user.id, **fields)
     return jsonify({"ok": True})
 
 
@@ -1244,7 +1246,7 @@ def route_quote_lead(lead_id):
         return jsonify({"error": "amount must be a number"}), 400
     if amount <= 0:
         return jsonify({"error": "amount must be > 0"}), 400
-    update_quote(lead_id, amount)
+    update_quote(lead_id, amount, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1255,7 +1257,7 @@ def route_won_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
         return jsonify({"error": f"Lead {lead_id} not found"}), 404
-    mark_won(lead_id)
+    mark_won(lead_id, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1273,7 +1275,7 @@ def route_lost_lead(lead_id):
     notes = (body.get("notes") or "").strip() or None
     if reason == "other" and not notes:
         return jsonify({"error": "notes required when reason is 'other'"}), 400
-    mark_lost(lead_id, reason, notes=notes)
+    mark_lost(lead_id, reason, notes=notes, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1284,7 +1286,7 @@ def route_delete_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
         return jsonify({"error": f"Lead {lead_id} not found"}), 404
-    delete_lead(lead_id)
+    delete_lead(lead_id, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
