@@ -596,7 +596,11 @@ def mark_paid(
         svc_fields = ""
         if not already_set:
             # explicit arg > service-type default
-            days = recurring_days if recurring_days is not None else get_service_interval(service_type or "")
+            days = (
+                recurring_days
+                if recurring_days is not None
+                else get_service_interval(service_type or "")
+            )
             svc_fields = (
                 f"next_service_due_at = date('now', '+{days} days'),"
                 f" service_reminder_at = date('now', '+{days} days'),"
