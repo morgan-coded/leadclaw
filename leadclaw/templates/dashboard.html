@@ -76,6 +76,15 @@
   .badge-won{background:#0d3321;color:#22c55e;}
   .badge-lost{background:#3b0d0d;color:#ef4444;}
   .badge-booked{background:#1a3a1a;color:#4ade80;}
+  .badge-request{background:#1e3a5f;color:#93c5fd;}
+  .req-card{background:var(--surface);border:1px solid #1d4ed8;border-radius:12px;padding:16px;margin-bottom:10px;}
+  .req-card.booked{border-color:var(--border);opacity:.75;}
+  .req-field{display:flex;gap:6px;font-size:12px;margin-bottom:4px;}
+  .req-field-label{color:var(--muted);min-width:80px;flex-shrink:0;}
+  .req-field-val{color:var(--text);}
+  .req-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;}
+  .req-actions .btn{flex:1;min-width:0;min-height:44px;}
+  .req-filter-row{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap;}
   .badge-completed{background:#1a2a3a;color:#60a5fa;}
   .badge-paid{background:#1a3a2a;color:#34d399;}
   .empty{color:var(--muted);font-style:italic;padding:16px 0;text-align:center;}
@@ -174,6 +183,10 @@
     <span class="nav-icon">&#x1F514;</span>Reminders
     <span id="reminders-badge" style="display:none;position:absolute;top:6px;right:calc(50% - 18px);background:var(--red);color:#fff;font-size:9px;font-weight:700;border-radius:8px;padding:1px 5px;"></span>
   </button>
+  <button class="nav-item" id="nav-requests" onclick="switchTab('requests')" style="position:relative">
+    <span class="nav-icon">&#x1F4E5;</span>Requests
+    <span id="requests-badge" style="display:none;position:absolute;top:6px;right:calc(50% - 22px);background:var(--accent);color:#fff;font-size:9px;font-weight:700;border-radius:8px;padding:1px 5px;"></span>
+  </button>
   <button class="nav-item" id="nav-more" onclick="switchTab('more')">
     <span class="nav-icon">&#x2630;</span>More
   </button>
@@ -195,6 +208,23 @@
     <section><h2>Reactivation &mdash; 30&ndash;59 Days</h2><div class="lead-list" id="reactivation-30"></div></section>
     <section><h2>Reactivation &mdash; 60&ndash;89 Days</h2><div class="lead-list" id="reactivation-60"></div></section>
     <section><h2>Reactivation &mdash; 90+ Days</h2><div class="lead-list" id="reactivation-90"></div></section>
+  </div>
+  <div class="tab-panel" id="tab-requests">
+    <section>
+      <div class="req-filter-row">
+        <h2 style="margin-bottom:0">Service Requests</h2>
+        <div style="margin-left:auto">
+          <select id="req-filter" onchange="loadRequests()"
+            style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                   color:var(--text);padding:6px 10px;font-size:13px;font-family:inherit;height:36px">
+            <option value="unbooked">Unbooked</option>
+            <option value="booked">Booked</option>
+            <option value="all">All Requests</option>
+          </select>
+        </div>
+      </div>
+      <div id="req-list"><div class="empty">Loading...</div></div>
+    </section>
   </div>
   <div class="tab-panel" id="tab-more">
     <section><h2>Closed Leads</h2><div class="lead-list" id="closed"></div></section>
@@ -243,6 +273,29 @@
         <div id="pilot-empty" class="empty" style="display:none">No candidates.</div>
       </div>
     </section>
+  </div>
+</div>
+
+<!-- Book Request sheet (from Requests tab — includes time window) -->
+<div class="sheet-overlay" id="sheet-book-request">
+  <div class="sheet"><div class="sheet-handle"></div>
+    <h3>Book Request</h3>
+    <input type="hidden" id="breq-id">
+    <div id="breq-summary" style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:13px;color:var(--muted);line-height:1.6"></div>
+    <div class="form-group"><label>Scheduled Date *</label><input id="breq-date" type="date"></div>
+    <div class="form-group">
+      <label>Scheduled Time Window (optional)</label>
+      <select id="breq-window" style="height:48px">
+        <option value="">Not set</option>
+        <option value="morning">Morning (8am–12pm)</option>
+        <option value="afternoon">Afternoon (12pm–5pm)</option>
+        <option value="evening">Evening (5pm–8pm)</option>
+        <option value="flexible">Flexible</option>
+      </select>
+    </div>
+    <div class="err" id="breq-err"></div>
+    <button class="sheet-primary-btn" onclick="submitBookRequest()">Confirm Booking</button>
+    <button class="btn" style="width:100%;margin-top:8px" onclick="closeSheet('sheet-book-request')">Cancel</button>
   </div>
 </div>
 
@@ -394,7 +447,7 @@ document.querySelectorAll('.sheet-overlay').forEach(el=>{
 
 // Tab switching
 const _lastLoaded={};
-const TAB_NAMES=['today','pipeline','reminders','more'];
+const TAB_NAMES=['today','pipeline','reminders','requests','more'];
 function switchTab(name){
   TAB_NAMES.forEach(t=>{
     const nb=document.getElementById('nav-'+t);
@@ -406,6 +459,7 @@ function switchTab(name){
   const stale=!_lastLoaded[name]||now-_lastLoaded[name]>30000;
   if(stale){
     if(name==='today'||name==='pipeline'||name==='reminders')load();
+    if(name==='requests')loadRequests();
     if(name==='more'){loadClosed();loadPilot();loadUsage();}
     _lastLoaded[name]=now;
   }
@@ -581,9 +635,12 @@ function draftMessage(lead,msgType){
   const service=lead.service||'the job';
   const scheduled=lead.scheduled_date||'your scheduled date';
   const quoteAmt=lead.quote_amount?'$'+Number(lead.quote_amount).toLocaleString(undefined,{maximumFractionDigits:0}):'';
+  const _twLabels={morning:'morning (8am\u201312pm)',afternoon:'afternoon (12pm\u20135pm)',evening:'evening (5pm\u20138pm)',flexible:null};
+  const tw=lead.scheduled_time_window?_twLabels[lead.scheduled_time_window]:null;
+  const twStr=tw?' in the '+tw:'';
   const templates={
     quote_followup:'Hey '+name+', just wanted to follow up on the quote'+(service!=='the job'?' for '+service:'')+(quoteAmt?' ('+quoteAmt+')':'')+'. Do you have any questions or want to get scheduled?',
-    booking_confirmation:'Hey '+name+', confirming your '+service+' appointment'+(scheduled!=='your scheduled date'?' on '+scheduled:'')+'. Let me know if you need to reschedule. Looking forward to it!',
+    booking_confirmation:'Hey '+name+', confirming your '+service+' appointment'+(scheduled!=='your scheduled date'?' on '+scheduled+twStr:'')+'. Let me know if you need to reschedule. Looking forward to it!',
     on_my_way:'Hey '+name+", I'm on my way for "+service+' today. See you soon!',
     running_late:'Hey '+name+", heads up \u2014 I'm running about 15 minutes behind for "+service+" today. I'll be there shortly, thanks for your patience!",
     review_request:'Hey '+name+', thanks for choosing us for '+service+'! If you were happy with the work, a quick Google review would mean a lot. Here\'s the link: [YOUR REVIEW LINK]',
@@ -1019,9 +1076,124 @@ async function pilotAction(id,action){
   if(r.ok){toast(action==='convert'?'Converted! 🎉':action+' done.');loadPilot();}else{toast(j.error||'Error',true);}
 }
 
+// ---------------------------------------------------------------------------
+// Requests tab
+// ---------------------------------------------------------------------------
+
+const TW_LABELS={'morning':'Morning (8am–12pm)','afternoon':'Afternoon (12pm–5pm)','evening':'Evening (5pm–8pm)','flexible':'Flexible'};
+
+function renderRequestCard(r){
+  const isBooked=['booked','completed','paid','won'].includes(r.status);
+  const cls=isBooked?' booked':'';
+  const fields=[];
+  if(r.service)fields.push(['Service',esc(r.service)]);
+  if(r.service_address)fields.push(['Address',esc(r.service_address)]);
+  if(r.phone)fields.push(['Phone',esc(r.phone)]);
+  if(r.email)fields.push(['Email',esc(r.email)]);
+  if(r.requested_date)fields.push(['Pref. Date',esc(r.requested_date)]);
+  if(r.requested_time_window)fields.push(['Pref. Time',esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)]);
+  if(r.notes)fields.push(['Notes',esc(r.notes)]);
+  if(r.scheduled_date)fields.push(['Booked Date',esc(r.scheduled_date)+(r.scheduled_time_window&&r.scheduled_time_window!=='flexible'?' · '+(TW_LABELS[r.scheduled_time_window]||r.scheduled_time_window):'')]);
+  const created=r.created_at?r.created_at.slice(0,10):'';
+
+  const rj=esc(JSON.stringify(r));
+  let actions='';
+  if(!isBooked){
+    actions+='<button class="btn btn-primary" onclick="openBookRequest(JSON.parse(this.dataset.r))" data-r="'+rj+'">&#x1F4C5; Book</button>';
+    actions+='<button class="btn" onclick="copyMessage(JSON.parse(this.dataset.r),\'booking_confirmation\')" data-r="'+rj+'">Copy Confirm</button>';
+    actions+='<button class="btn btn-danger" onclick="openLost('+r.id+')">Pass</button>';
+  } else {
+    actions+='<button class="btn" onclick="copyMessage(JSON.parse(this.dataset.r),\'booking_confirmation\')" data-r="'+rj+'">Copy Confirm</button>';
+  }
+
+  const headerBadge=isBooked?badge(r.status):'<span class="badge badge-request">Request</span>';
+
+  return '<div class="req-card'+cls+'" data-id="'+r.id+'" data-status="'+r.status+'">'   
+    +'<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">'
+    +'<div><div style="font-size:17px;font-weight:600">'+esc(r.name)+'</div>'
+    +(created?'<div style="font-size:11px;color:var(--muted)">Submitted '+created+'</div>':'')
+    +'</div>'+headerBadge+'</div>'
+    +fields.map(function(f){return '<div class="req-field"><span class="req-field-label">'+f[0]+'</span><span class="req-field-val">'+f[1]+'</span></div>';}).join('')
+    +'<div class="req-actions">'+actions+'</div>'
+    +'</div>';
+}
+
+async function loadRequests(){
+  const filter=document.getElementById('req-filter').value||'unbooked';
+  const el=document.getElementById('req-list');
+  if(!el)return;
+  el.innerHTML='<div class="empty">Loading...</div>';
+  try{
+    const d=await fetch('/api/requests?filter='+encodeURIComponent(filter)).then(r=>r.json());
+    const reqs=d.requests||[];
+    if(!reqs.length){el.innerHTML='<div class="empty">'+(filter==='unbooked'?'No pending requests 🎉':'No requests found.')+'</div>';}
+    else{el.innerHTML=reqs.map(renderRequestCard).join('');}
+    // Update badge (unbooked count)
+    if(filter==='unbooked'||!document.getElementById('requests-badge').textContent){
+      const badge=document.getElementById('requests-badge');
+      if(badge){
+        const count=filter==='unbooked'?reqs.length:null;
+        if(count!==null){badge.textContent=count>0?String(count):'';badge.style.display=count>0?'':'none';}
+      }
+    }
+  }catch(e){
+    el.innerHTML='<div class="empty">Error loading requests.</div>';
+  }
+}
+
+async function refreshRequestsBadge(){
+  try{
+    const d=await fetch('/api/requests?filter=unbooked').then(r=>r.json());
+    const count=(d.requests||[]).length;
+    const b=document.getElementById('requests-badge');
+    if(b){b.textContent=count>0?String(count):'';b.style.display=count>0?'':'none';}
+  }catch(e){}
+}
+
+function openBookRequest(r){
+  document.getElementById('breq-id').value=r.id;
+  document.getElementById('breq-date').value=r.requested_date||'';
+  document.getElementById('breq-window').value=r.requested_time_window||'';
+  document.getElementById('breq-err').style.display='none';
+  // Populate summary
+  const parts=[];
+  if(r.service)parts.push('🔧 '+esc(r.service));
+  if(r.service_address)parts.push('📍 '+esc(r.service_address));
+  if(r.requested_date)parts.push('📅 Prefers '+esc(r.requested_date)+(r.requested_time_window?' ('+esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)+')':''));
+  if(r.notes)parts.push('📋 '+esc(r.notes));
+  document.getElementById('breq-summary').innerHTML='👤 <strong>'+esc(r.name)+'</strong>'+(r.phone?' · '+esc(r.phone):'')+'
+'+parts.join('
+');
+  openSheet('sheet-book-request');
+}
+
+async function submitBookRequest(){
+  const id=document.getElementById('breq-id').value;
+  const date=document.getElementById('breq-date').value;
+  const tw=document.getElementById('breq-window').value||null;
+  const errEl=document.getElementById('breq-err');
+  if(!date||!validDate(date)){errEl.textContent='Enter a valid scheduled date (YYYY-MM-DD).';errEl.style.display='';return;}
+  const body={scheduled_date:date};
+  if(tw)body.scheduled_time_window=tw;
+  const r=await fetch('/api/leads/'+id+'/book',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
+  closeSheet('sheet-book-request');
+  toast('Booked! 🎉');
+  // Copy confirmation message to clipboard after booking
+  const lead=await fetch('/api/leads/'+id).then(res=>res.json()).catch(()=>null);
+  if(lead&&!lead.error){
+    const msg=draftMessage(lead,'booking_confirmation');
+    try{await navigator.clipboard.writeText(msg);}catch(e){}
+  }
+  loadRequests();
+  refreshRequestsBadge();
+}
+
 // Init
 switchTab('today');
 load();
+refreshRequestsBadge();
 </script>
 </body>
 </html>

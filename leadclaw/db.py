@@ -127,6 +127,8 @@ def init_db():
             "requested_date TEXT",
             "requested_time_window TEXT",
             "service_address TEXT",
+            # Feature: request-to-book conversion
+            "scheduled_time_window TEXT",
         ]
         for col_def in new_columns:
             try:

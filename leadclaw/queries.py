@@ -512,24 +512,33 @@ def mark_stale_leads_followup_due(user_id: Optional[int] = None) -> int:
         return cur.rowcount
 
 
-def mark_booked(lead_id: int, scheduled_date: str, user_id: Optional[int] = None):
-    """Mark a lead as booked with a scheduled job date."""
+def mark_booked(
+    lead_id: int,
+    scheduled_date: str,
+    scheduled_time_window: Optional[str] = None,
+    user_id: Optional[int] = None,
+):
+    """Mark a lead as booked with a scheduled job date and optional confirmed time window."""
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
-    params = (
-        (scheduled_date, lead_id, user_id) if user_id is not None else (scheduled_date, lead_id)
-    )
+    base_params_tail = (lead_id, user_id) if user_id is not None else (lead_id,)
+
+    # Optionally set scheduled_time_window in the same statement
+    tw_set = "scheduled_time_window = ?," if scheduled_time_window is not None else ""
+    tw_val: tuple = (scheduled_time_window,) if scheduled_time_window is not None else ()
+
     with get_conn() as conn:
         conn.execute(
             f"""
             UPDATE leads
             SET status = 'booked',
                 scheduled_date = ?,
+                {tw_set}
                 booked_at = datetime('now'),
                 last_contact_at = datetime('now'),
                 follow_up_after = NULL
             {where}
             """,
-            params,
+            (scheduled_date, *tw_val, *base_params_tail),
         )
         log_event(conn, "lead_booked", user_id=user_id, lead_id=lead_id)
 
@@ -821,6 +830,39 @@ def get_reactivation_leads(days: int, user_id: Optional[int] = None):
             ORDER BY last_contact_at ASC
             """,
             (lower, *upper_params),
+        ).fetchall()
+
+
+def get_public_requests(
+    user_id: Optional[int] = None,
+    filter: str = "unbooked",
+):
+    """Return leads where lead_source = 'public_request'.
+
+    filter='unbooked' (default): pending, not yet booked/closed
+    filter='booked':  booked/completed/paid/won requests
+    filter='all':     every public_request lead
+    """
+    if filter == "unbooked":
+        status_clause = "AND status NOT IN ('booked','completed','paid','won','lost')"
+    elif filter == "booked":
+        status_clause = "AND status IN ('booked','completed','paid','won')"
+    else:
+        status_clause = ""
+
+    uid_clause = "AND user_id = ?" if user_id is not None else ""
+    uid_params = (user_id,) if user_id is not None else ()
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT * FROM leads
+            WHERE lead_source = 'public_request'
+              {status_clause}
+              {uid_clause}
+            ORDER BY created_at DESC
+            """,
+            uid_params,
         ).fetchall()
 
 

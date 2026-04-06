@@ -207,6 +207,18 @@ def draft_message(lead: dict, msg_type: str) -> str:
     quote_amt = lead.get("quote_amount")
     quote = f"${quote_amt:,.0f}" if quote_amt else ""
 
+    # Scheduled time window label for booking confirmation
+    _tw_labels = {
+        "morning": "morning (8am–12pm)",
+        "afternoon": "afternoon (12pm–5pm)",
+        "evening": "evening (5pm–8pm)",
+        "flexible": None,  # don't include in message
+    }
+    raw_tw = lead.get("scheduled_time_window") or ""
+    tw_label = _tw_labels.get(raw_tw)
+
+    _booking_time = f" in the {tw_label}" if tw_label else ""
+
     templates = {
         "quote_followup": (
             f"Hey {name}, just wanted to follow up on the quote"
@@ -216,7 +228,7 @@ def draft_message(lead: dict, msg_type: str) -> str:
         ),
         "booking_confirmation": (
             f"Hey {name}, confirming your {service} appointment"
-            + (f" on {scheduled}" if scheduled != "your scheduled date" else "")
+            + (f" on {scheduled}{_booking_time}" if scheduled != "your scheduled date" else "")
             + ". Let me know if you need to reschedule. Looking forward to it!"
         ),
         "on_my_way": (f"Hey {name}, I'm on my way for {service} today." + " See you soon!"),

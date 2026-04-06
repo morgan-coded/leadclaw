@@ -78,6 +78,7 @@ from leadclaw.queries import (
     get_job_today_leads,
     get_lead_by_id,
     get_pipeline_summary,
+    get_public_requests,
     get_reactivation_leads,
     get_review_reminders,
     get_service_reminders,
@@ -652,6 +653,7 @@ def _lead_to_dict(row) -> dict:
         "requested_date": _safe_col("requested_date"),
         "requested_time_window": _safe_col("requested_time_window"),
         "service_address": _safe_col("service_address"),
+        "scheduled_time_window": _safe_col("scheduled_time_window"),
     }
 
 
@@ -995,7 +997,11 @@ def api_book_lead(lead_id):
     scheduled_date = data.get("scheduled_date", "")
     if not scheduled_date or not _valid_date(scheduled_date):
         return jsonify({"error": "scheduled_date required (YYYY-MM-DD)"}), 400
-    mark_booked(lead_id, scheduled_date, user_id=current_user.id)
+    scheduled_time_window = (data.get("scheduled_time_window") or "").strip() or None
+    _VALID_WINDOWS = {"morning", "afternoon", "evening", "flexible"}
+    if scheduled_time_window and scheduled_time_window not in _VALID_WINDOWS:
+        scheduled_time_window = None
+    mark_booked(lead_id, scheduled_date, scheduled_time_window=scheduled_time_window, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1073,6 +1079,28 @@ def api_next_service(lead_id):
 # ---------------------------------------------------------------------------
 # Reminder dismissal + usage endpoints
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Requests tab endpoint
+# ---------------------------------------------------------------------------
+
+_REQUEST_FILTER_VALUES = {"unbooked", "booked", "all"}
+
+
+@app.route("/api/requests")
+@login_required
+@verified_required
+def route_api_requests():
+    """Return public request leads filtered by status group."""
+    filter_val = (request.args.get("filter") or "unbooked").strip()
+    if filter_val not in _REQUEST_FILTER_VALUES:
+        filter_val = "unbooked"
+    try:
+        rows = get_public_requests(user_id=current_user.id, filter=filter_val)
+        return jsonify({"requests": [_lead_to_dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/reminders/dismiss", methods=["POST"])
