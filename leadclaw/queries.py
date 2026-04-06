@@ -267,7 +267,11 @@ def update_lead(lead_id: int, user_id: Optional[int] = None, **fields):
         return
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
-    params = (*updates.values(), lead_id, user_id) if user_id is not None else (*updates.values(), lead_id)
+    params = (
+        (*updates.values(), lead_id, user_id)
+        if user_id is not None
+        else (*updates.values(), lead_id)
+    )
     with get_conn() as conn:
         conn.execute(
             f"UPDATE leads SET {set_clause} {where}",  # noqa: S608 — safe, allowlisted
@@ -283,10 +287,19 @@ def delete_lead(lead_id: int, user_id: Optional[int] = None):
             conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
 
 
-def update_quote(lead_id: int, amount: float, followup_days: int = DEFAULT_FOLLOWUP_DAYS, user_id: Optional[int] = None):
+def update_quote(
+    lead_id: int,
+    amount: float,
+    followup_days: int = DEFAULT_FOLLOWUP_DAYS,
+    user_id: Optional[int] = None,
+):
     """Set/update quote, log contact time, and schedule next follow-up."""
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
-    params = (amount, f"+{followup_days}", lead_id, user_id) if user_id is not None else (amount, f"+{followup_days}", lead_id)
+    params = (
+        (amount, f"+{followup_days}", lead_id, user_id)
+        if user_id is not None
+        else (amount, f"+{followup_days}", lead_id)
+    )
     with get_conn() as conn:
         conn.execute(
             f"""
@@ -317,7 +330,9 @@ def mark_won(lead_id: int, user_id: Optional[int] = None):
         )
 
 
-def mark_lost(lead_id: int, reason: str, notes: Optional[str] = None, user_id: Optional[int] = None):
+def mark_lost(
+    lead_id: int, reason: str, notes: Optional[str] = None, user_id: Optional[int] = None
+):
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params = (reason, notes, lead_id, user_id) if user_id is not None else (reason, notes, lead_id)
     with get_conn() as conn:

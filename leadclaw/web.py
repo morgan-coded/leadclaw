@@ -24,6 +24,7 @@ Environment variables:
     APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
 """
 
+import html as _html
 import json as _json
 import os
 import secrets
@@ -95,7 +96,7 @@ if not _SECRET_KEY:
 
 app = Flask(__name__)
 app.secret_key = _SECRET_KEY
-app.config["SESSION_COOKIE_SECURE"] = True
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("APP_URL", "").startswith("https")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 login_manager = LoginManager()
@@ -520,7 +521,7 @@ def api_pilot_candidates(user_id: int, status: str = None) -> dict:
 
 def _build_dashboard_html(user_email: str) -> str:
     """Return the full dashboard HTML with user email and signout link injected."""
-    _html = (
+    _page = (
         """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -597,7 +598,7 @@ def _build_dashboard_html(user_email: str) -> str:
   <span id="updated">Loading…</span>
   <div class="header-user">
     <span>"""
-        + user_email
+        + _html.escape(user_email)
         + """</span>
     <a href="/logout">Sign out</a>
   </div>
@@ -1097,7 +1098,7 @@ load();
 </html>"""
     )
     return (
-        _html.replace("__LOST_REASONS_JS__", _LOST_REASONS_JS)
+        _page.replace("__LOST_REASONS_JS__", _LOST_REASONS_JS)
         .replace("__MAX_NAME_JS__", str(_MAX_NAME_JS))
         .replace("__MAX_FIELD_JS__", str(_MAX_FIELD_JS))
     )

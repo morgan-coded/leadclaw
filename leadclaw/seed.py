@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from leadclaw.db import get_conn, init_db
 
 
-def seed():
+def seed(force: bool = False):
     today = datetime.now()
 
     def daysago(n):
@@ -160,6 +160,13 @@ def seed():
     ]
 
     with get_conn() as conn:
+        user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if user_count > 1 and not force:
+            print(
+                f"ERROR: {user_count} users exist in this database. "
+                "Refusing to wipe leads. Pass --force to override."
+            )
+            return
         conn.execute("DELETE FROM leads")
         conn.executemany(
             """
@@ -177,8 +184,11 @@ def seed():
 
 
 def main():
+    import sys
+
+    force = "--force" in sys.argv
     init_db()
-    seed()
+    seed(force=force)
 
 
 if __name__ == "__main__":
