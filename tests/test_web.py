@@ -648,11 +648,11 @@ def test_signup_creates_user(client):
         },
         follow_redirects=False,
     )
-    # Should show "check your email" page (200) or redirect
-    assert r.status_code in (200, 302)
+    # Auto-verify active (email delivery bypassed for pilot phase) — redirects to dashboard
+    assert r.status_code == 302
     row = db.get_user_by_email("new@example.com")
     assert row is not None
-    assert row["email_verified"] == 0
+    assert row["email_verified"] == 1
 
 
 def test_signup_password_mismatch(client):
