@@ -26,7 +26,7 @@ def get_today_leads(user_id: Optional[int] = None):
             rows = conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('lost', 'paid')
+                WHERE status NOT IN ('lost', 'paid', 'won')
                   AND (date(created_at) = ? OR date(follow_up_after) = ?)
                   AND user_id = ?
                 ORDER BY follow_up_after ASC, created_at ASC
@@ -37,7 +37,7 @@ def get_today_leads(user_id: Optional[int] = None):
             rows = conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('lost', 'paid')
+                WHERE status NOT IN ('lost', 'paid', 'won')
                   AND (date(created_at) = ? OR date(follow_up_after) = ?)
                 ORDER BY follow_up_after ASC, created_at ASC
                 """,
@@ -53,7 +53,7 @@ def get_stale_leads(user_id: Optional[int] = None):
             rows = conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('lost', 'paid')
+                WHERE status NOT IN ('lost', 'paid', 'won')
                   AND date(follow_up_after) < date('now')
                   AND user_id = ?
                 ORDER BY follow_up_after ASC
@@ -64,7 +64,7 @@ def get_stale_leads(user_id: Optional[int] = None):
             rows = conn.execute(
                 """
                 SELECT * FROM leads
-                WHERE status NOT IN ('lost', 'paid')
+                WHERE status NOT IN ('lost', 'paid', 'won')
                   AND date(follow_up_after) < date('now')
                 ORDER BY follow_up_after ASC
                 """
