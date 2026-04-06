@@ -355,7 +355,7 @@ def signup():
     token = secrets.token_urlsafe(32)
     uid = create_user(email, pw_hash, token)
     # Auto-verify on signup (email delivery blocked on shared IPs; re-enable later)
-    verify_user_email(token)
+    verify_user_email(uid)
     row = get_user_by_id(uid)
     login_user(User(row))
     return redirect(url_for("dashboard"))
