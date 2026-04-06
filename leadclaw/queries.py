@@ -231,6 +231,30 @@ def get_closed_summary(user_id: Optional[int] = None):
     return closed, loss_reasons
 
 
+def get_closed_leads(user_id: Optional[int] = None):
+    """Return all closed leads (won / lost / paid) directly from SQL."""
+    with get_conn() as conn:
+        if user_id is not None:
+            rows = conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status IN ('won', 'lost', 'paid')
+                  AND user_id = ?
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status IN ('won', 'lost', 'paid')
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Write queries
 # ---------------------------------------------------------------------------
@@ -347,10 +371,26 @@ def log_event(
     )
 
 
-def get_event_counts(days: Optional[int] = None) -> list:
-    """Return event counts by type. Pass days=30 for last 30 days, None for all-time."""
+def get_event_counts(days: Optional[int] = None, user_id: Optional[int] = None) -> list:
+    """Return event counts by type.
+
+    Pass days=30 for last 30 days, None for all-time.
+    Pass user_id to scope results to a single user; omit for global counts (CLI).
+    """
     with get_conn() as conn:
-        if days is not None:
+        if days is not None and user_id is not None:
+            rows = conn.execute(
+                """
+                SELECT event_type, COUNT(*) as count
+                FROM event_log
+                WHERE date(created_at) >= date('now', ? || ' days')
+                  AND user_id = ?
+                GROUP BY event_type
+                ORDER BY count DESC
+                """,
+                (f"-{days}", user_id),
+            ).fetchall()
+        elif days is not None:
             rows = conn.execute(
                 """
                 SELECT event_type, COUNT(*) as count
@@ -360,6 +400,17 @@ def get_event_counts(days: Optional[int] = None) -> list:
                 ORDER BY count DESC
                 """,
                 (f"-{days}",),
+            ).fetchall()
+        elif user_id is not None:
+            rows = conn.execute(
+                """
+                SELECT event_type, COUNT(*) as count
+                FROM event_log
+                WHERE user_id = ?
+                GROUP BY event_type
+                ORDER BY count DESC
+                """,
+                (user_id,),
             ).fetchall()
         else:
             rows = conn.execute(

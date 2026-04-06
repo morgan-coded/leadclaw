@@ -51,8 +51,16 @@ def set_availability(
     blocked_dates: list,
 ) -> None:
     """Persist availability settings for user_id. Input is sanitized."""
-    # Unique ints in 0–6, sorted
-    clean_days = sorted({int(d) for d in allowed_weekdays if 0 <= int(d) <= 6})
+    # Unique valid ints in 0–6, sorted; non-convertible values are silently ignored
+    clean_days_set = set()
+    for d in allowed_weekdays:
+        try:
+            v = int(d)
+        except (ValueError, TypeError):
+            continue
+        if 0 <= v <= 6:
+            clean_days_set.add(v)
+    clean_days = sorted(clean_days_set)
     # Unique, valid YYYY-MM-DD strings, sorted
     clean_blocked = []
     for d in blocked_dates:
@@ -107,13 +115,16 @@ def check_date(date_str: str, avail: dict) -> dict:
 def next_available_date(avail: dict, from_date: Optional[str] = None) -> Optional[str]:
     """
     Return the nearest available date on or after from_date (default: today).
-    Returns None if no days are allowed or no date found within 60 days.
+
+    Consistent with check_date: empty allowed_weekdays means "all days available"
+    (safety net so nothing hard-blocks when weekdays are unconfigured).
+    Returns None only if no date found within 60 days (e.g., every day is blocked).
     """
     allowed = avail.get("allowed_weekdays")
     if allowed is None:
         allowed = DEFAULT_ALLOWED_WEEKDAYS
-    if not allowed:
-        return None
+    # Empty list = all weekdays allowed (matches check_date safety-net behavior)
+    all_days = len(allowed) == 0
 
     blocked = set(avail.get("blocked_dates") or [])
 
@@ -125,7 +136,7 @@ def next_available_date(avail: dict, from_date: Optional[str] = None) -> Optiona
     for i in range(60):
         d = start + timedelta(days=i)
         ds = d.strftime("%Y-%m-%d")
-        if d.weekday() in allowed and ds not in blocked:
+        if (all_days or d.weekday() in allowed) and ds not in blocked:
             return ds
     return None
 
