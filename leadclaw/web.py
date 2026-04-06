@@ -71,12 +71,19 @@ from leadclaw.queries import (
     delete_lead,
     get_all_active_leads,
     get_all_leads,
+    get_invoice_reminders,
     get_lead_by_id,
     get_pipeline_summary,
+    get_service_reminders,
     get_stale_leads,
     get_today_leads,
+    mark_booked,
+    mark_completed,
+    mark_invoice_sent,
     mark_lost,
+    mark_paid,
     mark_won,
+    set_next_service,
     update_lead,
     update_quote,
 )
@@ -437,6 +444,12 @@ _MAX_FIELD_JS = MAX_FIELD_LENGTH
 
 
 def _lead_to_dict(row) -> dict:
+    def _safe_col(key, default=None):
+        try:
+            return row[key]
+        except (IndexError, KeyError):
+            return default
+
     return {
         "id": row["id"],
         "name": row["name"],
@@ -448,9 +461,16 @@ def _lead_to_dict(row) -> dict:
         "follow_up_after": str(row["follow_up_after"])[:10] if row["follow_up_after"] else None,
         "notes": row["notes"],
         "lost_reason": row["lost_reason"],
-        "lost_reason_notes": row["lost_reason_notes"]
-        if "lost_reason_notes" in row.keys()
-        else None,
+        "lost_reason_notes": _safe_col("lost_reason_notes"),
+        "scheduled_date": str(_safe_col("scheduled_date"))[:10] if _safe_col("scheduled_date") else None,
+        "booked_at": str(_safe_col("booked_at"))[:10] if _safe_col("booked_at") else None,
+        "completed_at": str(_safe_col("completed_at"))[:10] if _safe_col("completed_at") else None,
+        "invoice_amount": _safe_col("invoice_amount"),
+        "invoice_sent_at": str(_safe_col("invoice_sent_at"))[:10] if _safe_col("invoice_sent_at") else None,
+        "paid_at": str(_safe_col("paid_at"))[:10] if _safe_col("paid_at") else None,
+        "next_service_due_at": str(_safe_col("next_service_due_at"))[:10] if _safe_col("next_service_due_at") else None,
+        "invoice_reminder_at": str(_safe_col("invoice_reminder_at"))[:10] if _safe_col("invoice_reminder_at") else None,
+        "service_reminder_at": str(_safe_col("service_reminder_at"))[:10] if _safe_col("service_reminder_at") else None,
     }
 
 
@@ -494,6 +514,8 @@ def api_summary(user_id: int) -> dict:
         "today": today,
         "stale": stale,
         "active": active,
+        "invoice_reminders": [_lead_to_dict(r) for r in get_invoice_reminders(user_id=user_id)],
+        "service_reminders": [_lead_to_dict(r) for r in get_service_reminders(user_id=user_id)],
     }
 
 
@@ -574,6 +596,9 @@ def _build_dashboard_html(user_email: str) -> str:
   .badge-followup_due{background:#3b1f0a;color:#f59e0b;}
   .badge-won{background:#0d3321;color:#22c55e;}
   .badge-lost{background:#3b0d0d;color:#ef4444;}
+  .badge-booked{background:#1a3a1a;color:#4ade80;}
+  .badge-completed{background:#1a2a3a;color:#60a5fa;}
+  .badge-paid{background:#1a3a2a;color:#34d399;}
   .empty{color:var(--muted);font-style:italic;padding:10px 0;}
   .warn-banner{background:#2a1a0a;border:1px solid #7c4a00;border-radius:7px;padding:10px 14px;font-size:12px;color:#f59e0b;margin-bottom:16px;}
   .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;}
@@ -611,6 +636,7 @@ def _build_dashboard_html(user_email: str) -> str:
   <div class="tabs">
     <div class="tab active" onclick="switchTab('pipeline')">Pipeline</div>
     <div class="tab" onclick="switchTab('closed')">Closed</div>
+    <div class="tab" onclick="switchTab('reminders')">Reminders</div>
     <div class="tab" id="tab-btn-pilot" onclick="switchTab('pilot')">Pilot</div>
   </div>
 
@@ -622,6 +648,11 @@ def _build_dashboard_html(user_email: str) -> str:
 
   <div class="tab-panel" id="tab-closed">
     <section><h2>Won &amp; Lost</h2><div class="lead-list" id="closed"></div></section>
+  </div>
+
+  <div class="tab-panel" id="tab-reminders">
+    <section><h2>Invoice Reminders</h2><div class="lead-list" id="invoice-reminders"></div></section>
+    <section><h2>Recurring Service Due</h2><div class="lead-list" id="service-reminders"></div></section>
   </div>
 
   <div class="tab-panel" id="tab-pilot">
@@ -659,6 +690,48 @@ def _build_dashboard_html(user_email: str) -> str:
         <tbody id="pilot-tbody"></tbody>
       </table>
       <div id="pilot-empty" class="empty" style="display:none">No candidates. Import a CSV or add manually via CLI.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Book modal -->
+<div class="overlay" id="modal-book" onclick="closeModal(event)">
+  <div class="modal">
+    <h3>Book Lead</h3>
+    <input type="hidden" id="book-id">
+    <div class="form-group"><label>Scheduled Date</label><input id="book-date" type="date"></div>
+    <div class="err" id="book-err"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeOverlay('modal-book')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitBook()">Book</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice modal -->
+<div class="overlay" id="modal-invoice" onclick="closeModal(event)">
+  <div class="modal">
+    <h3>Send Invoice</h3>
+    <input type="hidden" id="invoice-id">
+    <div class="form-group"><label>Invoice Amount ($, leave blank to use quote amount)</label><input id="invoice-amount" type="number" min="0.01" step="0.01" placeholder="e.g. 950"></div>
+    <div class="err" id="invoice-err"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeOverlay('modal-invoice')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitInvoice()">Record Invoice</button>
+    </div>
+  </div>
+</div>
+
+<!-- Next Service modal -->
+<div class="overlay" id="modal-nextsvc" onclick="closeModal(event)">
+  <div class="modal">
+    <h3>Set Next Service Date</h3>
+    <input type="hidden" id="nextsvc-id">
+    <div class="form-group"><label>Next Service Date</label><input id="nextsvc-date" type="date"></div>
+    <div class="err" id="nextsvc-err"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeOverlay('modal-nextsvc')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitNextService()">Set Date</button>
     </div>
   </div>
 </div>
@@ -779,7 +852,7 @@ function validEmail(v){return v.includes('@')&&v.split('@').pop().includes('.');
 function validDate(v){return /^\d{4}-\d{2}-\d{2}$/.test(v)&&!isNaN(Date.parse(v));}
 
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['pipeline','closed','pilot'][i]===name));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['pipeline','closed','reminders','pilot'][i]===name));
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));
   if(name==='closed')loadClosed();
   if(name==='pilot')loadPilot();
@@ -788,23 +861,49 @@ function switchTab(name){
 function renderLead(l,showActions=true){
   const due=l.follow_up_after?`<div class="lead-meta ${l.status==='followup_due'?'yellow':''}">${l.follow_up_after}</div>`:'';
   const quote=l.quote_amount?`<div class="lead-meta">${fmt(l.quote_amount)}</div>`:'';
-  const contact=[l.phone,l.email].filter(Boolean).join(' · ');
-  const isActive=!['won','lost'].includes(l.status);
+  const contact=[l.phone,l.email].filter(Boolean).join(' \u00b7 ');
+  const isActive=!['won','lost','paid'].includes(l.status);
   const lj=esc(JSON.stringify(l));
-  const actions=showActions?(isActive?`
-    <button class="btn btn-sm" onclick='openQuote(${l.id})'>Quote</button>
-    <button class="btn btn-sm" onclick='openEdit(JSON.parse(this.dataset.l))' data-l="${lj}">Edit</button>
-    <button class="btn btn-sm" onclick='doWon(${l.id},"${esc(l.name)}")'>Won</button>
-    <button class="btn btn-sm btn-danger" onclick='openLost(${l.id})'>Lost</button>
-    <button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>
-  `:`<button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>`):'';
-  const lostNote=l.lost_reason?`<div class="lead-notes">Lost: ${esc(l.lost_reason)}${l.lost_reason_notes?' — '+esc(l.lost_reason_notes):''}</div>`:'';
+  let actions='';
+  if(showActions){
+    if(['won','lost','paid'].includes(l.status)){
+      if(l.status==='paid'){
+        actions=`<button class="btn btn-sm" onclick='openNextService(${l.id})'>Next Service</button>`;
+      }
+      actions+=`<button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>`;
+    } else if(l.status==='booked'){
+      actions=`<button class="btn btn-sm" onclick='doComplete(${l.id},"${esc(l.name)}")'>Complete</button>`+
+        `<button class="btn btn-sm btn-danger" onclick='openLost(${l.id})'>Lost</button>`+
+        `<button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>`;
+    } else if(l.status==='completed'){
+      const invoiceBtn=`<button class="btn btn-sm" onclick='openInvoice(${l.id},${l.quote_amount||0})'>Invoice</button>`;
+      const paidBtn=l.invoice_sent_at?`<button class="btn btn-sm" onclick='doPaid(${l.id},"${esc(l.name)}")'>Mark Paid</button>`:"";
+      actions=invoiceBtn+paidBtn+
+        `<button class="btn btn-sm btn-danger" onclick='openLost(${l.id})'>Lost</button>`+
+        `<button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>`;
+    } else {
+      actions=`<button class="btn btn-sm" onclick='openQuote(${l.id})'>Quote</button>`+
+        `<button class="btn btn-sm" onclick='openBook(${l.id})'>Book</button>`+
+        `<button class="btn btn-sm" onclick='openEdit(JSON.parse(this.dataset.l))' data-l="${lj}">Edit</button>`+
+        `<button class="btn btn-sm" onclick='doWon(${l.id},"${esc(l.name)}")'>Won</button>`+
+        `<button class="btn btn-sm btn-danger" onclick='openLost(${l.id})'>Lost</button>`+
+        `<button class="btn btn-sm btn-danger" onclick='doDelete(${l.id},"${esc(l.name)}")'>Del</button>`;
+    }
+  }
+  const lostNote=l.lost_reason?`<div class="lead-notes">Lost: ${esc(l.lost_reason)}${l.lost_reason_notes?' \u2014 '+esc(l.lost_reason_notes):''}</div>`:'';
+  const extraMeta=[];
+  if(l.scheduled_date)extraMeta.push(`Scheduled: ${l.scheduled_date}`);
+  if(l.invoice_amount)extraMeta.push(`Invoice: ${fmt(l.invoice_amount)}`);
+  if(l.paid_at)extraMeta.push(`Paid: ${l.paid_at}`);
+  if(l.next_service_due_at)extraMeta.push(`Next svc: ${l.next_service_due_at}`);
+  const extraMetaEl=extraMeta.length?`<div class="lead-notes">${extraMeta.join(' \u00b7 ')}</div>`:'';
   return `<div class="lead" data-id="${l.id}" data-status="${l.status}">
     <div class="lead-body">
       <div class="lead-top"><span class="lead-name">${esc(l.name)}</span>${badge(l.status)}</div>
-      <div class="lead-service">${esc(l.service||'')}${contact?' · '+esc(contact):''}</div>
+      <div class="lead-service">${esc(l.service||'')}${contact?' \u00b7 '+esc(contact):''}</div>
       ${l.notes?`<div class="lead-notes">${esc(l.notes)}</div>`:''}
       ${lostNote}
+      ${extraMetaEl}
     </div>
     <div class="lead-actions">
       <div>${quote}${due}<div class="lead-meta">#${l.id}</div></div>
@@ -812,7 +911,6 @@ function renderLead(l,showActions=true){
     </div>
   </div>`;
 }
-
 function renderList(id,leads,showActions=true){
   document.getElementById(id).innerHTML=leads.length?leads.map(l=>renderLead(l,showActions)).join(''):'<div class="empty">None</div>';
 }
@@ -834,6 +932,10 @@ async function load(){
     renderList('today',d.today);
     renderList('stale',d.stale);
     renderList('active',d.active);
+    const ir=d.invoice_reminders||[];
+    const sr=d.service_reminders||[];
+    document.getElementById('invoice-reminders').innerHTML=ir.length?ir.map(l=>renderLead(l,true)).join(''):'<div class="empty">No overdue invoices.</div>';
+    document.getElementById('service-reminders').innerHTML=sr.length?sr.map(l=>renderLead(l,true)).join(''):'<div class="empty">No recurring service due.</div>';
     document.getElementById('updated').textContent='Updated '+new Date().toLocaleTimeString();
   }catch(e){document.getElementById('updated').textContent='Error loading';}
 }
@@ -1092,6 +1194,78 @@ async function pilotAction(id,action){
   if(r.ok){toast(action==='convert'?'Converted! 🎉':action+' done.');loadPilot();}else{toast(j.error||'Error',true);}
 }
 
+// ===========================================================================
+// New lifecycle action handlers: Book, Complete, Invoice, Paid, Next Service
+// ===========================================================================
+
+function openBook(id){
+  document.getElementById('book-id').value=id;
+  document.getElementById('book-date').value='';
+  document.getElementById('book-err').style.display='none';
+  document.getElementById('modal-book').classList.add('open');
+}
+async function submitBook(){
+  const id=document.getElementById('book-id').value;
+  const date=document.getElementById('book-date').value;
+  const errEl=document.getElementById('book-err');
+  if(!date||!validDate(date)){errEl.textContent='Enter a valid date (YYYY-MM-DD).';errEl.style.display='';return;}
+  const r=await fetch(`/api/leads/${id}/book`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scheduled_date:date})});
+  const j=await r.json();
+  if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
+  closeOverlay('modal-book');toast('Lead booked!');load();
+}
+
+async function doComplete(id,name){
+  if(!confirm('Mark "'+name+'" as completed?'))return;
+  const r=await fetch(`/api/leads/${id}/complete`,{method:'POST'});
+  if(r.ok){toast('Marked completed.');load();}else{toast('Error',true);}
+}
+
+function openInvoice(id,defaultAmount){
+  document.getElementById('invoice-id').value=id;
+  document.getElementById('invoice-amount').value=defaultAmount||'';
+  document.getElementById('invoice-err').style.display='none';
+  document.getElementById('modal-invoice').classList.add('open');
+}
+async function submitInvoice(){
+  const id=document.getElementById('invoice-id').value;
+  const amount=document.getElementById('invoice-amount').value;
+  const errEl=document.getElementById('invoice-err');
+  const body={};
+  if(amount){
+    const a=parseFloat(amount);
+    if(isNaN(a)||a<=0){errEl.textContent='Amount must be > 0.';errEl.style.display='';return;}
+    body.invoice_amount=a;
+  }
+  const r=await fetch(`/api/leads/${id}/invoice`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
+  closeOverlay('modal-invoice');toast('Invoice recorded.');load();
+}
+
+async function doPaid(id,name){
+  if(!confirm('Mark "'+name+'" as PAID?'))return;
+  const r=await fetch(`/api/leads/${id}/paid`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recurring_days:90})});
+  if(r.ok){toast('Marked paid!');load();}else{toast('Error',true);}
+}
+
+function openNextService(id){
+  document.getElementById('nextsvc-id').value=id;
+  document.getElementById('nextsvc-date').value='';
+  document.getElementById('nextsvc-err').style.display='none';
+  document.getElementById('modal-nextsvc').classList.add('open');
+}
+async function submitNextService(){
+  const id=document.getElementById('nextsvc-id').value;
+  const date=document.getElementById('nextsvc-date').value;
+  const errEl=document.getElementById('nextsvc-err');
+  if(!date||!validDate(date)){errEl.textContent='Enter a valid date (YYYY-MM-DD).';errEl.style.display='';return;}
+  const r=await fetch(`/api/leads/${id}/next-service`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({next_service_due_at:date})});
+  const j=await r.json();
+  if(!r.ok){errEl.textContent=j.error||'Error';errEl.style.display='';return;}
+  closeOverlay('modal-nextsvc');toast('Next service date set.');load();
+}
+
 load();
 </script>
 </body>
@@ -1288,6 +1462,92 @@ def route_delete_lead(lead_id):
     if not lead:
         return jsonify({"error": f"Lead {lead_id} not found"}), 404
     delete_lead(lead_id, user_id=current_user.id)
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# New lifecycle endpoints: book, complete, invoice, paid, next-service
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/leads/<int:lead_id>/book", methods=["POST"])
+@login_required
+@verified_required
+def api_book_lead(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": "Not found"}), 404
+    data = request.get_json(silent=True) or {}
+    scheduled_date = data.get("scheduled_date", "")
+    if not scheduled_date or not _valid_date(scheduled_date):
+        return jsonify({"error": "scheduled_date required (YYYY-MM-DD)"}), 400
+    mark_booked(lead_id, scheduled_date, user_id=current_user.id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/leads/<int:lead_id>/complete", methods=["POST"])
+@login_required
+@verified_required
+def api_complete_lead(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": "Not found"}), 404
+    mark_completed(lead_id, user_id=current_user.id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/leads/<int:lead_id>/invoice", methods=["POST"])
+@login_required
+@verified_required
+def api_invoice_lead(lead_id):
+    from leadclaw.config import DEFAULT_INVOICE_REMINDER_DAYS
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": "Not found"}), 404
+    data = request.get_json(silent=True) or {}
+    amount = data.get("invoice_amount")
+    if amount is not None:
+        try:
+            amount = float(amount)
+            if amount <= 0:
+                return jsonify({"error": "amount must be > 0"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid amount"}), 400
+    mark_invoice_sent(lead_id, invoice_amount=amount, reminder_days=DEFAULT_INVOICE_REMINDER_DAYS, user_id=current_user.id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/leads/<int:lead_id>/paid", methods=["POST"])
+@login_required
+@verified_required
+def api_paid_lead(lead_id):
+    from leadclaw.config import DEFAULT_RECURRING_DAYS
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": "Not found"}), 404
+    data = request.get_json(silent=True) or {}
+    recurring = data.get("recurring_days")
+    if recurring is not None:
+        try:
+            recurring = int(recurring)
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid recurring_days"}), 400
+    mark_paid(lead_id, recurring_days=recurring, user_id=current_user.id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/leads/<int:lead_id>/next-service", methods=["POST"])
+@login_required
+@verified_required
+def api_next_service(lead_id):
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": "Not found"}), 404
+    data = request.get_json(silent=True) or {}
+    date_val = data.get("next_service_due_at", "")
+    if not date_val or not _valid_date(date_val):
+        return jsonify({"error": "next_service_due_at required (YYYY-MM-DD)"}), 400
+    set_next_service(lead_id, date_val, user_id=current_user.id)
     return jsonify({"ok": True})
 
 

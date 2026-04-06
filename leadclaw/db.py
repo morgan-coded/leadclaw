@@ -56,7 +56,7 @@ def init_db():
                 phone             TEXT,
                 email             TEXT,
                 service           TEXT,
-                status            TEXT NOT NULL CHECK(status IN ('new','quoted','followup_due','won','lost')),
+                status            TEXT NOT NULL CHECK(status IN ('new','quoted','followup_due','booked','completed','paid','lost','won')),
                 lost_reason       TEXT CHECK(lost_reason IN (
                                       'price','timing','went_competitor',
                                       'no_response','not_qualified','service_area','other'
@@ -102,6 +102,29 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_pilot_phone   ON pilot_candidates(phone);
             CREATE INDEX IF NOT EXISTS idx_pilot_followup ON pilot_candidates(follow_up_after);
         """)
+
+        # --- Column migrations: add new lifecycle columns to leads ---
+        # Note: SQLite cannot ALTER a CHECK constraint on existing tables.
+        # App-level validation handles new statuses for existing DBs.
+        # New installs get the full CHECK from the CREATE TABLE above.
+        new_columns = [
+            "scheduled_date TEXT",
+            "booked_at TEXT",
+            "completed_at TEXT",
+            "invoice_amount REAL",
+            "invoice_sent_at TEXT",
+            "paid_at TEXT",
+            "next_service_due_at TEXT",
+            "invoice_reminder_at TEXT",
+            "service_reminder_at TEXT",
+        ]
+        for col_def in new_columns:
+            col_name = col_def.split()[0]
+            try:
+                conn.execute(f"ALTER TABLE leads ADD COLUMN {col_def}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
         # --- Column migrations: add user_id to leads ---
         # SQLite doesn't support IF NOT EXISTS on ALTER TABLE ADD COLUMN

@@ -5,7 +5,13 @@ or via cron: 0 8 * * * cd /path/to/leadclaw && python3 scheduler.py
 """
 
 from leadclaw.commands import print_pipeline_summary
-from leadclaw.queries import get_pipeline_summary, get_stale_leads, mark_stale_leads_followup_due
+from leadclaw.queries import (
+    get_invoice_reminders,
+    get_pipeline_summary,
+    get_service_reminders,
+    get_stale_leads,
+    mark_stale_leads_followup_due,
+)
 
 
 def run_daily_digest():
@@ -29,6 +35,19 @@ def run_daily_digest():
             print(f"  ... and {len(stale) - 5} more")
     else:
         print("\nNo stale leads.")
+
+    invoice_due = get_invoice_reminders()
+    if invoice_due:
+        print(f"\n=== Invoice Reminders ({len(invoice_due)}) ===")
+        for lead in invoice_due:
+            amt = f"${lead['invoice_amount']:,.0f}" if lead['invoice_amount'] else f"${lead['quote_amount']:,.0f}" if lead['quote_amount'] else ""
+            print(f"  [{lead['id']}] {lead['name']} — {amt} — follow up on payment")
+
+    service_due = get_service_reminders()
+    if service_due:
+        print(f"\n=== Recurring Service Due ({len(service_due)}) ===")
+        for lead in service_due:
+            print(f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} — due {str(lead['service_reminder_at'])[:10]}")
 
 
 def main():

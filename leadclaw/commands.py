@@ -31,15 +31,22 @@ from leadclaw.queries import (
     get_all_active_leads,
     get_all_leads,
     get_closed_summary,
+    get_invoice_reminders,
     get_lead_by_id,
     get_lead_by_name,
     get_pipeline_summary,
+    get_service_reminders,
     get_stale_leads,
     get_today_leads,
     import_leads_from_rows,
+    mark_booked,
+    mark_completed,
+    mark_invoice_sent,
     mark_lost,
+    mark_paid,
     mark_stale_leads_followup_due,
     mark_won,
+    set_next_service,
     update_lead,
     update_quote,
 )
@@ -51,6 +58,9 @@ STATUS_LABELS_PLAIN = {
     "new": "[new]",
     "quoted": "[quoted]",
     "followup_due": "[followup_due]",
+    "booked": "[booked]",
+    "completed": "[completed]",
+    "paid": "[paid]",
     "won": "[won]",
     "lost": "[lost]",
 }
@@ -67,6 +77,14 @@ def _status_label(status: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _safe(row, key, default=None):
+    """Safe dict/Row access for columns that may not exist on old rows."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
 def fmt_lead(lead) -> str:
     prefix = (
         _status_label(lead["status"]).split()[0] if not _PLAIN else _status_label(lead["status"])
@@ -75,6 +93,16 @@ def fmt_lead(lead) -> str:
     lines.append(f"   Status: {lead['status']}")
     if lead["quote_amount"]:
         lines.append(f"   Quote:  ${lead['quote_amount']:,.0f}")
+    if _safe(lead, "scheduled_date"):
+        lines.append(f"   Scheduled: {str(_safe(lead, 'scheduled_date'))[:10]}")
+    if _safe(lead, "invoice_amount"):
+        lines.append(f"   Invoice: ${_safe(lead, 'invoice_amount'):,.0f}")
+    if _safe(lead, "paid_at"):
+        lines.append(f"   Paid:    {str(_safe(lead, 'paid_at'))[:10]}")
+    if _safe(lead, "next_service_due_at"):
+        lines.append(f"   Next svc: {str(_safe(lead, 'next_service_due_at'))[:10]}")
+    if _safe(lead, "invoice_reminder_at"):
+        lines.append(f"   Invoice reminder: {str(_safe(lead, 'invoice_reminder_at'))[:10]}")
     if lead["phone"]:
         lines.append(f"   Phone:  {lead['phone']}")
     if lead["email"]:
@@ -338,6 +366,90 @@ def cmd_lost(args):
     print(f"[{lead['id']}] {lead['name']} marked as LOST — reason: {args.reason}")
 
 
+def cmd_book(args):
+    """Mark a lead as booked with a scheduled date."""
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
+    if not lead:
+        return
+    scheduled = args.date
+    if not _validate_date(scheduled):
+        print("Invalid date format. Use YYYY-MM-DD.")
+        return
+    mark_booked(lead["id"], scheduled)
+    print(f"[{lead['id']}] {lead['name']} → booked for {scheduled}.")
+
+
+def cmd_complete(args):
+    """Mark a booked job as completed."""
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
+    if not lead:
+        return
+    mark_completed(lead["id"])
+    print(f"[{lead['id']}] {lead['name']} → completed. Run: leadclaw invoice {lead['name']} to send invoice.")
+
+
+def cmd_invoice(args):
+    """Record that an invoice was sent (optionally override amount)."""
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
+    if not lead:
+        return
+    amount = args.amount  # may be None
+    if amount is not None and amount <= 0:
+        print("Invoice amount must be greater than zero.")
+        return
+    from leadclaw.config import DEFAULT_INVOICE_REMINDER_DAYS
+    mark_invoice_sent(lead["id"], invoice_amount=amount, reminder_days=DEFAULT_INVOICE_REMINDER_DAYS)
+    display_amount = amount or lead["quote_amount"]
+    amt_str = f"${display_amount:,.0f}" if display_amount else "(no amount)"
+    print(f"[{lead['id']}] {lead['name']} — invoice sent {amt_str}. Reminder in {DEFAULT_INVOICE_REMINDER_DAYS} days.")
+
+
+def cmd_paid(args):
+    """Mark a lead as paid and optionally schedule next service."""
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
+    if not lead:
+        return
+    from leadclaw.config import DEFAULT_RECURRING_DAYS
+    recurring = args.recurring if hasattr(args, "recurring") and args.recurring is not None else DEFAULT_RECURRING_DAYS
+    mark_paid(lead["id"], recurring_days=recurring)
+    print(f"[{lead['id']}] {lead['name']} → PAID 💰. Next service reminder in {recurring} days.")
+
+
+def cmd_next_service(args):
+    """Set or update the next service due date for a lead."""
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
+    if not lead:
+        return
+    date_val = args.date
+    if not _validate_date(date_val):
+        print("Invalid date format. Use YYYY-MM-DD.")
+        return
+    set_next_service(lead["id"], date_val)
+    print(f"[{lead['id']}] {lead['name']} — next service set to {date_val}.")
+
+
+def cmd_reminders(args):
+    """Show all pending invoice and service reminders."""
+    invoice_due = get_invoice_reminders()
+    service_due = get_service_reminders()
+
+    if not invoice_due and not service_due:
+        print("No pending reminders.")
+        return
+
+    if invoice_due:
+        print(f"=== Invoice Reminders ({len(invoice_due)}) ===\n")
+        for lead in invoice_due:
+            amt = f"${lead['invoice_amount']:,.0f}" if lead['invoice_amount'] else f"${lead['quote_amount']:,.0f}" if lead['quote_amount'] else "(no amount)"
+            print(f"  [{lead['id']}] {lead['name']} — {amt} — sent {str(lead.get('invoice_sent_at', ''))[:10]}")
+        print()
+
+    if service_due:
+        print(f"=== Recurring Service Due ({len(service_due)}) ===\n")
+        for lead in service_due:
+            print(f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} — due {str(lead['service_reminder_at'])[:10]}")
+
+
 def cmd_draft(args):
     if not check_api_key():
         print("ANTHROPIC_API_KEY not set. Copy .env.example to .env and add your key.")
@@ -570,6 +682,57 @@ def build_parser():
     p_lost.add_argument("name", nargs="?", default="")
     p_lost.add_argument("reason", choices=LOST_REASONS)
     p_lost.add_argument("--id", type=int)
+
+    p_book = sub.add_parser(
+        "book",
+        help="Mark a lead as booked with a scheduled date",
+        epilog="Examples:\n  leadclaw book Mike 2026-04-10\n  leadclaw book --id 7 2026-04-10",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_book.add_argument("name", nargs="?", default="")
+    p_book.add_argument("date", help="Scheduled date (YYYY-MM-DD)")
+    p_book.add_argument("--id", type=int)
+
+    p_complete = sub.add_parser(
+        "complete",
+        help="Mark a booked job as completed",
+        epilog="Examples:\n  leadclaw complete Mike\n  leadclaw complete --id 7",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_complete.add_argument("name", nargs="?", default="")
+    p_complete.add_argument("--id", type=int)
+
+    p_invoice = sub.add_parser(
+        "invoice",
+        help="Record invoice sent (optionally override amount)",
+        epilog="Examples:\n  leadclaw invoice Mike\n  leadclaw invoice Mike 950\n  leadclaw invoice --id 7 950",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_invoice.add_argument("name", nargs="?", default="")
+    p_invoice.add_argument("amount", type=float, nargs="?", default=None, help="Invoice amount (default: same as quote)")
+    p_invoice.add_argument("--id", type=int)
+
+    p_paid = sub.add_parser(
+        "paid",
+        help="Mark a lead as paid",
+        epilog="Examples:\n  leadclaw paid Mike\n  leadclaw paid Mike --recurring 30\n  leadclaw paid --id 7",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_paid.add_argument("name", nargs="?", default="")
+    p_paid.add_argument("--id", type=int)
+    p_paid.add_argument("--recurring", type=int, default=None, help="Days until next service reminder (default: LEADCLAW_RECURRING_DAYS or 90)")
+
+    p_nextsvc = sub.add_parser(
+        "next-service",
+        help="Set or update next service due date",
+        epilog="Examples:\n  leadclaw next-service Mike 2026-07-01\n  leadclaw next-service --id 7 2026-07-01",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_nextsvc.add_argument("name", nargs="?", default="")
+    p_nextsvc.add_argument("date", help="Next service date (YYYY-MM-DD)")
+    p_nextsvc.add_argument("--id", type=int)
+
+    sub.add_parser("reminders", help="Show pending invoice and service reminders")
 
     p_draft = sub.add_parser(
         "draft-followup",
@@ -959,6 +1122,12 @@ COMMAND_MAP = {
     "quote": cmd_quote,
     "won": cmd_won,
     "lost": cmd_lost,
+    "book": cmd_book,
+    "complete": cmd_complete,
+    "invoice": cmd_invoice,
+    "paid": cmd_paid,
+    "next-service": cmd_next_service,
+    "reminders": cmd_reminders,
     "draft-followup": cmd_draft,
     "summarize": cmd_summarize,
     "digest": cmd_digest,

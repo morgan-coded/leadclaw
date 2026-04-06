@@ -22,6 +22,9 @@ STATUS_LABELS = {
     "new": "🆕 New",
     "quoted": "💬 Quoted",
     "followup_due": "🔔 Follow-up Due",
+    "booked": "📅 Booked",
+    "completed": "🔧 Completed",
+    "paid": "💰 Paid",
     "won": "✅ Won",
     "lost": "❌ Lost",
 }
@@ -38,6 +41,8 @@ LOST_REASONS = [
 ]
 
 DEFAULT_FOLLOWUP_DAYS = 3
+DEFAULT_RECURRING_DAYS = int(os.getenv("LEADCLAW_RECURRING_DAYS", "90"))
+DEFAULT_INVOICE_REMINDER_DAYS = int(os.getenv("LEADCLAW_INVOICE_REMINDER_DAYS", "3"))
 MAX_FIELD_LENGTH = 500
 MAX_NAME_LENGTH = 100
 MAX_LIST_ROWS = 200
