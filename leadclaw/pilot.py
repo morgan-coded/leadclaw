@@ -62,23 +62,26 @@ def score_candidate(
     return min(score, 100)
 
 
-def find_duplicates(name: str, phone: Optional[str] = None) -> list:
+def find_duplicates(name: str, phone: Optional[str] = None, user_id: Optional[int] = None) -> list:
     """
     Check for existing candidates matching by name (fuzzy) or exact phone.
-    Returns list of matching rows.
+    Returns list of matching rows. Scoped to user_id when provided.
     """
     results = []
+    uid_clause = " AND user_id = ?" if user_id is not None else ""
+    uid_param = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         if phone:
             rows = conn.execute(
-                "SELECT * FROM pilot_candidates WHERE phone = ?", (phone,)
+                f"SELECT * FROM pilot_candidates WHERE phone = ?{uid_clause}",
+                (phone, *uid_param),
             ).fetchall()
             results.extend(rows)
         if name:
             safe = name.replace("%", r"\%").replace("_", r"\_")
             rows = conn.execute(
-                "SELECT * FROM pilot_candidates WHERE name LIKE ? ESCAPE '\\' ORDER BY created_at DESC",
-                (f"%{safe}%",),
+                f"SELECT * FROM pilot_candidates WHERE name LIKE ? ESCAPE '\\'{uid_clause} ORDER BY created_at DESC",
+                (f"%{safe}%", *uid_param),
             ).fetchall()
             for r in rows:
                 if r["id"] not in {d["id"] for d in results}:
@@ -130,13 +133,19 @@ def get_candidate_by_id(cid: int, user_id: Optional[int] = None):
         return conn.execute("SELECT * FROM pilot_candidates WHERE id = ?", (cid,)).fetchone()
 
 
-def get_candidate_by_name(name: str):
+def get_candidate_by_name(name: str, user_id: Optional[int] = None):
     safe = name.replace("%", r"\%").replace("_", r"\_")
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM pilot_candidates WHERE name LIKE ? ESCAPE '\\' ORDER BY score DESC, created_at DESC",
-            (f"%{safe}%",),
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT * FROM pilot_candidates WHERE name LIKE ? ESCAPE '\\' AND user_id = ? ORDER BY score DESC, created_at DESC",
+                (f"%{safe}%", user_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM pilot_candidates WHERE name LIKE ? ESCAPE '\\' ORDER BY score DESC, created_at DESC",
+                (f"%{safe}%",),
+            ).fetchall()
     if not rows:
         return None, []
     return rows[0], rows
@@ -205,7 +214,7 @@ def add_candidate(
     Insert a pilot candidate. Returns (id, duplicates).
     Score is computed automatically.
     """
-    dupes = find_duplicates(name, phone)
+    dupes = find_duplicates(name, phone, user_id=user_id)
     s = score_candidate(service_type, has_phone=bool(phone), has_email=bool(email), source=source)
     if source not in SOURCES:
         source = "manual_entry"
@@ -305,9 +314,12 @@ def set_reply_summary(cid: int, summary: str):
         )
 
 
-def delete_candidate(cid: int):
+def delete_candidate(cid: int, user_id: Optional[int] = None):
     with get_conn() as conn:
-        conn.execute("DELETE FROM pilot_candidates WHERE id = ?", (cid,))
+        if user_id is not None:
+            conn.execute("DELETE FROM pilot_candidates WHERE id = ? AND user_id = ?", (cid, user_id))
+        else:
+            conn.execute("DELETE FROM pilot_candidates WHERE id = ?", (cid,))
 
 
 def import_candidates_from_rows(rows: list) -> dict:

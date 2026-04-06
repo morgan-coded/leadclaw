@@ -25,6 +25,7 @@ Environment variables:
 """
 
 import json as _json
+import html as _html
 import os
 import secrets
 import smtplib
@@ -95,7 +96,7 @@ if not _SECRET_KEY:
 
 app = Flask(__name__)
 app.secret_key = _SECRET_KEY
-app.config["SESSION_COOKIE_SECURE"] = True
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("APP_URL", "").startswith("https")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 login_manager = LoginManager()
@@ -597,7 +598,7 @@ def _build_dashboard_html(user_email: str) -> str:
   <span id="updated">Loading…</span>
   <div class="header-user">
     <span>"""
-        + user_email
+        + _html.escape(user_email)
         + """</span>
     <a href="/logout">Sign out</a>
   </div>
