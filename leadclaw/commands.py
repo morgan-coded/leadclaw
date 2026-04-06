@@ -656,7 +656,7 @@ def cmd_import(args):
         if missing:
             print(f"CSV is missing required column(s): {', '.join(sorted(missing))}")
             print("Required: name, service")
-            print("Optional: phone, email, notes, followup_days")
+            print("Optional: phone, email, notes, followup_days, quote_amount")
             return
 
         rows = list(reader)
@@ -928,7 +928,7 @@ def build_parser():
         help="Import leads from a CSV file",
         epilog=(
             "Required columns: name, service\n"
-            "Optional columns: phone, email, notes, followup_days\n"
+            "Optional columns: phone, email, notes, followup_days, quote_amount\n"
             "Example: leadclaw import leads.csv"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

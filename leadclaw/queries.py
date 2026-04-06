@@ -427,6 +427,7 @@ def mark_lost(
 def import_leads_from_rows(rows: list) -> dict:
     """
     Bulk-insert leads from a list of dicts (pre-validated CSV rows).
+    Supports: name, service, phone, email, notes, followup_days, quote_amount.
     Returns {imported, skipped, errors} summary.
     """
     imported = 0
@@ -449,10 +450,21 @@ def import_leads_from_rows(rows: list) -> dict:
                 followup_days = DEFAULT_FOLLOWUP_DAYS
         except (ValueError, TypeError):
             followup_days = DEFAULT_FOLLOWUP_DAYS
+        quote_amount = None
+        raw_quote = (row.get("quote_amount") or "").strip()
+        if raw_quote:
+            try:
+                quote_amount = float(raw_quote)
+                if quote_amount <= 0:
+                    quote_amount = None
+            except (ValueError, TypeError):
+                pass  # ignore unparseable quote amounts
         try:
-            add_lead(
+            lead_id, _ = add_lead(
                 name, service, phone=phone, email=email, notes=notes, followup_days=followup_days
             )
+            if quote_amount is not None:
+                update_quote(lead_id, quote_amount, followup_days=followup_days)
             imported += 1
         except Exception as e:  # noqa: BLE001
             errors.append(f"Row {i + 1} ({name}): {e}")
@@ -461,16 +473,24 @@ def import_leads_from_rows(rows: list) -> dict:
     return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
-def mark_stale_leads_followup_due() -> int:
-    """Auto-promote overdue new/quoted leads to followup_due. Returns count updated."""
+def mark_stale_leads_followup_due(user_id: Optional[int] = None) -> int:
+    """Auto-promote overdue new/quoted leads to followup_due. Returns count updated.
+
+    Pass user_id to restrict to a single user (e.g. per-user web action).
+    Omit for the global daily scheduler run which covers all users.
+    """
+    uid_clause = "AND user_id = ?" if user_id is not None else ""
+    uid_params = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         cur = conn.execute(
-            """
+            f"""
             UPDATE leads
             SET status = 'followup_due'
             WHERE status IN ('new', 'quoted')
               AND date(follow_up_after) < date('now')
-            """
+              {uid_clause}
+            """,
+            uid_params,
         )
         return cur.rowcount
 
