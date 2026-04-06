@@ -756,3 +756,96 @@ def test_login_wrong_password(client):
 def test_logout_redirects(auth_client):
     r = auth_client.get("/logout", follow_redirects=False)
     assert r.status_code in (302, 308)
+
+
+# ---------------------------------------------------------------------------
+# Public service request form
+# ---------------------------------------------------------------------------
+
+
+class TestPublicRequest:
+    _VALID = {
+        "name": "Jane Smith",
+        "phone": "512-555-0199",
+        "email": "jane@example.com",
+        "service": "Lawn Mowing",
+        "service_address": "123 Oak St, Austin, TX 78701",
+        "requested_date": "2026-05-10",
+        "requested_time_window": "morning",
+        "notes": "Gate code is 1234",
+    }
+
+    def test_get_form_renders(self, client):
+        r = client.get("/request")
+        assert r.status_code == 200
+        assert b"Request Service" in r.data
+        assert b"name=" in r.data
+        assert b"phone" in r.data
+        assert b"service_address" in r.data
+
+    def test_valid_submission_creates_lead(self, client):
+        r = client.post("/request", data=self._VALID, follow_redirects=True)
+        assert r.status_code == 200
+        assert b"Request Received" in r.data
+
+        # Verify lead is in DB with correct metadata
+        import sqlite3
+
+        conn = sqlite3.connect(os.environ["LEADCLAW_DB"])
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM leads WHERE name = ?", ("Jane Smith",)).fetchone()
+        conn.close()
+
+        assert row is not None
+        assert row["lead_source"] == "public_request"
+        assert row["service_address"] == "123 Oak St, Austin, TX 78701"
+        assert row["requested_date"] == "2026-05-10"
+        assert row["requested_time_window"] == "morning"
+        assert row["phone"] == "512-555-0199"
+        assert row["email"] == "jane@example.com"
+        assert row["service"] == "Lawn Mowing"
+        assert row["status"] == "new"
+
+    def test_missing_name_returns_422(self, client):
+        data = {**self._VALID, "name": ""}
+        r = client.post("/request", data=data)
+        assert r.status_code == 422
+        assert b"Name is required" in r.data
+
+    def test_missing_phone_returns_422(self, client):
+        data = {**self._VALID, "phone": ""}
+        r = client.post("/request", data=data)
+        assert r.status_code == 422
+        assert b"Phone number is required" in r.data
+
+    def test_missing_address_returns_422(self, client):
+        data = {**self._VALID, "service_address": ""}
+        r = client.post("/request", data=data)
+        assert r.status_code == 422
+        assert b"Service address is required" in r.data
+
+    def test_invalid_service_returns_422(self, client):
+        data = {**self._VALID, "service": "HackerService"}
+        r = client.post("/request", data=data)
+        assert r.status_code == 422
+
+    def test_optional_fields_can_be_omitted(self, client):
+        data = {
+            "name": "Bob",
+            "phone": "555-0100",
+            "service": "Cleanup",
+            "service_address": "456 Elm St",
+        }
+        r = client.post("/request", data=data, follow_redirects=True)
+        assert r.status_code == 200
+        assert b"Request Received" in r.data
+
+    def test_no_auth_required_for_request_page(self, client):
+        """Public form must not redirect unauthenticated users."""
+        r = client.get("/request")
+        assert r.status_code == 200
+
+    def test_protected_routes_still_require_auth(self, client):
+        """No regression — protected routes still 401/redirect without login."""
+        r = client.get("/api/summary", follow_redirects=False)
+        assert r.status_code in (302, 401)

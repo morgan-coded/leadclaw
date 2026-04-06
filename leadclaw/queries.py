@@ -244,6 +244,10 @@ def add_lead(
     notes: Optional[str] = None,
     followup_days: int = DEFAULT_FOLLOWUP_DAYS,
     user_id: int = 1,
+    lead_source: Optional[str] = None,
+    requested_date: Optional[str] = None,
+    requested_time_window: Optional[str] = None,
+    service_address: Optional[str] = None,
 ):
     """Insert a new lead. Also returns existing leads with the exact same name (duplicate warning)."""
     _, existing = get_lead_by_name(name, user_id=user_id)
@@ -254,12 +258,25 @@ def add_lead(
             """
             INSERT INTO leads
                 (name, phone, email, service, status, created_at,
-                 last_contact_at, follow_up_after, notes, user_id)
+                 last_contact_at, follow_up_after, notes, user_id,
+                 lead_source, requested_date, requested_time_window, service_address)
             VALUES
                 (?, ?, ?, ?, 'new', datetime('now'), datetime('now'),
-                 datetime('now', ? || ' days'), ?, ?)
+                 datetime('now', ? || ' days'), ?, ?, ?, ?, ?, ?)
             """,
-            (name, phone, email, service, f"+{followup_days}", notes, user_id),
+            (
+                name,
+                phone,
+                email,
+                service,
+                f"+{followup_days}",
+                notes,
+                user_id,
+                lead_source,
+                requested_date,
+                requested_time_window,
+                service_address,
+            ),
         )
         lead_id = cur.lastrowid
 

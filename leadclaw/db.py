@@ -122,6 +122,11 @@ def init_db():
             "review_request_sent_at TEXT",
             "reactivation_dismissed_at TEXT",
             "job_reminder_dismissed_at TEXT",
+            # Feature: public service request form
+            "lead_source TEXT",
+            "requested_date TEXT",
+            "requested_time_window TEXT",
+            "service_address TEXT",
         ]
         for col_def in new_columns:
             try:

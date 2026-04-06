@@ -336,6 +336,164 @@ UNVERIFIED_HTML = (
 )
 
 # ---------------------------------------------------------------------------
+# Public service request form
+# ---------------------------------------------------------------------------
+
+_REQUEST_SERVICES = [
+    "Lawn Mowing",
+    "Landscaping",
+    "Cleanup",
+    "Mulching",
+    "Other",
+]
+
+_REQUEST_TIME_WINDOWS = [
+    ("morning", "Morning (8am–12pm)"),
+    ("afternoon", "Afternoon (12pm–5pm)"),
+    ("evening", "Evening (5pm–8pm)"),
+    ("flexible", "Flexible"),
+]
+
+_REQUEST_CSS = (
+    _AUTH_CSS
+    + """
+<style>
+select,textarea{width:100%;padding:9px 12px;background:#22263a;border:1px solid var(--border);
+  border-radius:6px;color:var(--text);font-size:16px;font-family:inherit;outline:none;
+  -webkit-appearance:none;appearance:none;}
+select:focus,textarea:focus{border-color:var(--accent);}
+textarea{resize:vertical;min-height:80px;}
+.card{max-width:480px;}
+.success-icon{font-size:48px;margin-bottom:12px;}
+.success-msg{font-size:18px;font-weight:600;margin-bottom:8px;}
+.success-sub{color:var(--muted);font-size:14px;line-height:1.5;}
+</style>
+"""
+)
+
+_REQUEST_FORM_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>Request Service</title>" + _REQUEST_CSS + "</head><body><div class='card'>"
+    "<h1>🦞 Request Service</h1>"
+    "<div class='sub'>Fill out the form and we'll get back to you shortly.</div>"
+    "{% if error %}<div class='err'>{{ error }}</div>{% endif %}"
+    "<form method='post'>"
+    "<div class='form-group'><label>Your Name *</label>"
+    "<input type='text' name='name' required autocomplete='name' value='{{ name|default(\"\") }}'></div>"
+    "<div class='form-group'><label>Phone Number *</label>"
+    "<input type='tel' name='phone' required autocomplete='tel' value='{{ phone|default(\"\") }}'></div>"
+    "<div class='form-group'><label>Email (optional)</label>"
+    "<input type='email' name='email' autocomplete='email' value='{{ email|default(\"\") }}'></div>"
+    "<div class='form-group'><label>Service Needed *</label>"
+    "<select name='service' required>"
+    "{% for svc in services %}"
+    "<option value='{{ svc }}' {% if svc == service %}selected{% endif %}>{{ svc }}</option>"
+    "{% endfor %}"
+    "</select></div>"
+    "<div class='form-group'><label>Service Address *</label>"
+    "<input type='text' name='service_address' required placeholder='Street, City, ZIP'"
+    " value='{{ service_address|default(\"\") }}'></div>"
+    "<div class='form-group'><label>Preferred Date (optional)</label>"
+    "<input type='date' name='requested_date' value='{{ requested_date|default(\"\") }}'></div>"
+    "<div class='form-group'><label>Preferred Time Window</label>"
+    "<select name='requested_time_window'>"
+    "{% for val, label in time_windows %}"
+    "<option value='{{ val }}' {% if val == requested_time_window %}selected{% endif %}>{{ label }}</option>"
+    "{% endfor %}"
+    "</select></div>"
+    "<div class='form-group'><label>Notes (optional)</label>"
+    "<textarea name='notes' placeholder='Any extra details...'>{{ notes|default(\"\") }}</textarea></div>"
+    "<button class='btn' type='submit'>Submit Request</button>"
+    "</form>"
+    "</div></body></html>"
+)
+
+_REQUEST_SUCCESS_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>Request Received</title>" + _REQUEST_CSS + "</head><body><div class='card'>"
+    "<div style='text-align:center;padding:16px 0'>"
+    "<div class='success-icon'>✅</div>"
+    "<div class='success-msg'>Request Received!</div>"
+    "<div class='success-sub'>Thanks, {{ name }}! We'll review your request and reach out soon.</div>"
+    "</div>"
+    "</div></body></html>"
+)
+
+
+@app.route("/request", methods=["GET", "POST"])
+def public_request():
+    """Public service request form. No auth required. Creates a lead on submit."""
+    if request.method == "GET":
+        return render_template_string(
+            _REQUEST_FORM_HTML,
+            services=_REQUEST_SERVICES,
+            time_windows=_REQUEST_TIME_WINDOWS,
+        )
+
+    name = (request.form.get("name") or "").strip()
+    phone = (request.form.get("phone") or "").strip()
+    email = (request.form.get("email") or "").strip() or None
+    service = (request.form.get("service") or "").strip()
+    service_address = (request.form.get("service_address") or "").strip()
+    requested_date = (request.form.get("requested_date") or "").strip() or None
+    requested_time_window = (request.form.get("requested_time_window") or "").strip() or None
+    notes = (request.form.get("notes") or "").strip() or None
+
+    errors = []
+    if not name:
+        errors.append("Name is required.")
+    if not phone:
+        errors.append("Phone number is required.")
+    if not service or service not in _REQUEST_SERVICES:
+        errors.append("Please select a valid service.")
+    if not service_address:
+        errors.append("Service address is required.")
+    if email and not _valid_email(email):
+        errors.append("Enter a valid email address.")
+    if requested_date and not _valid_date(requested_date):
+        errors.append("Enter a valid date.")
+        requested_date = None
+    if requested_time_window and requested_time_window not in {v for v, _ in _REQUEST_TIME_WINDOWS}:
+        requested_time_window = None
+
+    if errors:
+        return (
+            render_template_string(
+                _REQUEST_FORM_HTML,
+                error=" ".join(errors),
+                services=_REQUEST_SERVICES,
+                time_windows=_REQUEST_TIME_WINDOWS,
+                name=name,
+                phone=phone,
+                email=email or "",
+                service=service,
+                service_address=service_address,
+                requested_date=requested_date or "",
+                requested_time_window=requested_time_window or "flexible",
+                notes=notes or "",
+            ),
+            422,
+        )
+
+    add_lead(
+        name=name,
+        service=service,
+        phone=phone,
+        email=email,
+        notes=notes,
+        lead_source="public_request",
+        requested_date=requested_date,
+        requested_time_window=requested_time_window,
+        service_address=service_address,
+        user_id=1,
+    )
+
+    return render_template_string(_REQUEST_SUCCESS_HTML, name=name)
+
+
+# ---------------------------------------------------------------------------
 # Auth routes
 # ---------------------------------------------------------------------------
 
@@ -490,6 +648,10 @@ def _lead_to_dict(row) -> dict:
         "review_reminder_at": str(_safe_col("review_reminder_at"))[:10]
         if _safe_col("review_reminder_at")
         else None,
+        "lead_source": _safe_col("lead_source"),
+        "requested_date": _safe_col("requested_date"),
+        "requested_time_window": _safe_col("requested_time_window"),
+        "service_address": _safe_col("service_address"),
     }
 
 

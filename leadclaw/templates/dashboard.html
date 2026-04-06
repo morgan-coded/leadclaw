@@ -491,9 +491,11 @@ function renderLead(l,opts){
 
   const secondaryRow=secondaryBtns.length?'<div class="lead-secondary-row">'+secondaryBtns.join('')+'</div>':'';
 
+  const sourceBadge=l.lead_source==='public_request'?'<span style="font-size:10px;font-weight:600;background:#1e3a5f;color:#93c5fd;border:1px solid #1d4ed8;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle">Request</span>':'';
+
   return '<div class="lead" data-id="'+l.id+'" data-status="'+l.status+'">'
     +'<div class="lead-card-body">'
-    +'<div class="lead-header"><div>'+alertHtml+'<div class="lead-name">'+esc(l.name)+'</div></div>'+badge(l.status)+'</div>'
+    +'<div class="lead-header"><div>'+alertHtml+'<div class="lead-name">'+esc(l.name)+sourceBadge+'</div></div>'+badge(l.status)+'</div>'
     +'<div class="lead-sub">'+esc(l.service||'')+(contact?' \u00b7 '+esc(contact):'')+'</div>'
     +notesHtml
     +metaRow
