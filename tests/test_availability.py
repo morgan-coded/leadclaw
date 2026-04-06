@@ -19,7 +19,6 @@ import os
 import pytest
 
 from leadclaw.availability import (
-    WEEKDAY_NAMES,
     check_date,
     get_availability,
     next_available_date,

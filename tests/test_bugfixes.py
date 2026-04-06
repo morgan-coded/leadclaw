@@ -14,7 +14,6 @@ Covers:
 
 import json
 import os
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -186,8 +185,6 @@ def test_get_event_counts_global_includes_all_users():
 
 def test_api_usage_scoped_to_current_user():
     """GET /api/usage should only return events for the logged-in user."""
-    from leadclaw.db import create_user, verify_user_email
-    import bcrypt
 
     # Create two users
     u1_id = 1  # created by init_db or first auth client
@@ -219,8 +216,8 @@ def test_api_usage_scoped_to_current_user():
 
 def test_api_closed_only_closed_statuses():
     """api_closed should return won/lost/paid, not active leads."""
-    from leadclaw.web import api_closed
     from leadclaw.queries import mark_lost, mark_paid
+    from leadclaw.web import api_closed
 
     id_active, _ = add_lead("Active Lead", "gutters", user_id=1)
     id_won, _ = add_lead("Won Lead", "roofing", user_id=1)
@@ -241,7 +238,7 @@ def test_api_closed_only_closed_statuses():
 
 def test_get_closed_leads_direct_sql():
     """get_closed_leads() should return closed rows without Python filtering."""
-    from leadclaw.queries import get_closed_leads, mark_lost, mark_paid
+    from leadclaw.queries import get_closed_leads, mark_paid
 
     id_active, _ = add_lead("Active2", "gutters", user_id=1)
     id_won, _ = add_lead("Won2", "roofing", user_id=1)
