@@ -250,7 +250,7 @@ def test_print_pipeline_summary_output(capsys):
     print_pipeline_summary(summary, totals)
     out = capsys.readouterr().out
     assert "Open pipeline" in out
-    assert "Won" in out
+    assert "Paid (closed)" in out
 
 
 # ---------------------------------------------------------------------------

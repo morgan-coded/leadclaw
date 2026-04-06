@@ -131,6 +131,16 @@ def get_all_active_leads(user_id: Optional[int] = None):
     return rows
 
 
+def get_closed_leads(user_id: int):
+    """Return won/lost/paid leads for a user, ordered newest first."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM leads WHERE status IN ('won', 'lost', 'paid') AND user_id = ?"
+            " ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+
+
 def get_all_leads(limit: int = 200, offset: int = 0, user_id: Optional[int] = None):
     """Every lead, all statuses, with pagination."""
     with get_conn() as conn:

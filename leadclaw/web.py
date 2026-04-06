@@ -72,7 +72,7 @@ from leadclaw.queries import (
     delete_lead,
     dismiss_reminder_standalone,
     get_all_active_leads,
-    get_all_leads,
+    get_closed_leads,
     get_event_counts,
     get_invoice_reminders,
     get_job_today_leads,
@@ -460,7 +460,7 @@ def _lead_to_dict(row) -> dict:
         "id": row["id"],
         "name": row["name"],
         "service": row["service"],
-        "status": row["status"],
+        "status": "paid" if row["status"] == "won" else row["status"],
         "phone": row["phone"],
         "email": row["email"],
         "quote_amount": row["quote_amount"],
@@ -544,10 +544,7 @@ def api_summary(user_id: int) -> dict:
 
 
 def api_closed(user_id: int) -> dict:
-    all_leads = get_all_leads(limit=10000, user_id=user_id)
-    # Treat 'won' as 'paid' for display purposes
-    closed = [_lead_to_dict(r) for r in all_leads if r["status"] in ("won", "lost", "paid")]
-    return {"closed": closed}
+    return {"closed": [_lead_to_dict(r) for r in get_closed_leads(user_id)]}
 
 
 def api_usage(user_id: int) -> dict:
@@ -586,7 +583,6 @@ def _build_dashboard_html(user_email: str) -> str:
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="LeadClaw">
-<link rel="manifest" href="/manifest.json">
 <title>LeadClaw</title>
 <style>
   :root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2a2d3a;--text:#e8eaf0;--muted:#6b7280;--accent:#6366f1;--accent-h:#4f52d1;--green:#22c55e;--yellow:#f59e0b;--red:#ef4444;}
@@ -1627,12 +1623,34 @@ def manifest():
             "display": "standalone",
             "background_color": "#0f1117",
             "theme_color": "#6366f1",
-            "icons": [
-                {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
-                {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
-            ],
+            "icons": [],
         }
     )
+
+
+@app.route("/request", methods=["POST"])
+def route_request():
+    """Public quote-request endpoint. Creates a lead assigned to user_id=1 (the CLI/owner account)."""
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    if len(name) > MAX_NAME_LENGTH:
+        return jsonify({"error": f"name max {MAX_NAME_LENGTH} chars"}), 400
+    phone = (body.get("phone") or "").strip() or None
+    if phone and len(phone) > 20:
+        return jsonify({"error": "phone max 20 chars"}), 400
+    service_address = (body.get("service_address") or "").strip() or None
+    if service_address and len(service_address) > MAX_FIELD_LENGTH:
+        return jsonify({"error": f"service_address max {MAX_FIELD_LENGTH} chars"}), 400
+    notes = (body.get("notes") or "").strip() or None
+    if notes and len(notes) > MAX_FIELD_LENGTH:
+        return jsonify({"error": f"notes max {MAX_FIELD_LENGTH} chars"}), 400
+    # Combine service_address into notes so it's visible without a schema change
+    combined_notes = "\n".join(filter(None, [service_address, notes])) or None
+    service = (body.get("service") or "General").strip()
+    lead_id, _ = add_lead(name, service, phone=phone, notes=combined_notes, user_id=1)
+    return jsonify({"id": lead_id}), 201
 
 
 @app.route("/")
