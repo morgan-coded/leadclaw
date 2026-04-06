@@ -203,26 +203,30 @@ def get_pipeline_summary(user_id: Optional[int] = None):
     return rows, totals
 
 
-def get_closed_summary():
+def get_closed_summary(user_id: Optional[int] = None):
     """Paid/won/lost breakdown with loss reasons. 'won' is merged into 'paid' for display."""
+    uid_clause = "AND user_id = ?" if user_id is not None else ""
+    uid_params = (user_id,) if user_id is not None else ()
     with get_conn() as conn:
         closed = conn.execute(
-            """
+            f"""
             SELECT
                 CASE WHEN status = 'won' THEN 'paid' ELSE status END as status,
                 COUNT(*) as count,
                 COALESCE(SUM(quote_amount), 0) as total
-            FROM leads WHERE status IN ('won', 'lost', 'paid')
+            FROM leads WHERE status IN ('won', 'lost', 'paid') {uid_clause}
             GROUP BY CASE WHEN status = 'won' THEN 'paid' ELSE status END
-            """
+            """,
+            uid_params,
         ).fetchall()
         loss_reasons = conn.execute(
-            """
+            f"""
             SELECT lost_reason, COUNT(*) as count
             FROM leads
-            WHERE status = 'lost' AND lost_reason IS NOT NULL
+            WHERE status = 'lost' AND lost_reason IS NOT NULL {uid_clause}
             GROUP BY lost_reason ORDER BY count DESC
-            """
+            """,
+            uid_params,
         ).fetchall()
     return closed, loss_reasons
 
@@ -502,41 +506,34 @@ def mark_completed(lead_id: int, user_id: Optional[int] = None):
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params = (lead_id, user_id) if user_id is not None else (lead_id,)
     with get_conn() as conn:
-        # Get service type and current next_service_due_at
         row = conn.execute(
             "SELECT service, next_service_due_at FROM leads WHERE id = ?", (lead_id,)
         ).fetchone()
         service_type = row["service"] if row else ""
         already_set = row["next_service_due_at"] if row else None
-        interval = get_service_interval(service_type or "")
 
-        if already_set:
-            # Preserve existing explicit next service date
-            conn.execute(
-                f"""
-                UPDATE leads
-                SET status = 'completed',
-                    completed_at = datetime('now'),
-                    last_contact_at = datetime('now'),
-                    review_reminder_at = date('now', '+1 days')
-                {where}
-                """,
-                params,
+        # Only auto-set service dates when not already explicitly scheduled.
+        # svc_fields ends with a comma so it can be embedded before the next SET item.
+        svc_fields = ""
+        if not already_set:
+            interval = get_service_interval(service_type or "")
+            svc_fields = (
+                f"next_service_due_at = date('now', '+{interval} days'),"
+                f" service_reminder_at = date('now', '+{interval} days'),"
             )
-        else:
-            conn.execute(
-                f"""
-                UPDATE leads
-                SET status = 'completed',
-                    completed_at = datetime('now'),
-                    last_contact_at = datetime('now'),
-                    review_reminder_at = date('now', '+1 days'),
-                    next_service_due_at = date('now', '+{interval} days'),
-                    service_reminder_at = date('now', '+{interval} days')
-                {where}
-                """,
-                params,
-            )
+
+        conn.execute(
+            f"""
+            UPDATE leads
+            SET status = 'completed',
+                completed_at = datetime('now'),
+                last_contact_at = datetime('now'),
+                {svc_fields}
+                review_reminder_at = date('now', '+1 days')
+            {where}
+            """,
+            params,
+        )
         log_event(conn, "lead_completed", user_id=user_id, lead_id=lead_id)
 
 
@@ -582,60 +579,43 @@ def mark_paid(
     Does NOT override an existing explicit next_service_due_at.
     Also sets review_reminder_at to tomorrow if not already set.
     """
-    from leadclaw.config import DEFAULT_RECURRING_DAYS
     from leadclaw.service_defaults import get_service_interval
 
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params_base = (lead_id, user_id) if user_id is not None else (lead_id,)
 
     with get_conn() as conn:
-        # Determine interval: explicit arg > service-type default > config default
         row = conn.execute(
             "SELECT service, next_service_due_at FROM leads WHERE id = ?", (lead_id,)
         ).fetchone()
         already_set = row["next_service_due_at"] if row else None
         service_type = row["service"] if row else ""
 
-        if recurring_days is not None:
-            days = recurring_days
-        else:
-            days = (
-                get_service_interval(service_type or "")
-                if not already_set
-                else DEFAULT_RECURRING_DAYS
+        # Only auto-set service dates when not already explicitly scheduled.
+        # svc_fields ends with a comma so it can be embedded before the next SET item.
+        svc_fields = ""
+        if not already_set:
+            # explicit arg > service-type default
+            days = recurring_days if recurring_days is not None else get_service_interval(service_type or "")
+            svc_fields = (
+                f"next_service_due_at = date('now', '+{days} days'),"
+                f" service_reminder_at = date('now', '+{days} days'),"
             )
 
-        if already_set:
-            # Preserve existing explicit next service date — don't reset it
-            conn.execute(
-                f"""
-                UPDATE leads
-                SET status = 'paid',
-                    paid_at = datetime('now'),
-                    invoice_reminder_at = NULL,
-                    last_contact_at = datetime('now'),
-                    follow_up_after = NULL,
-                    review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
-                {where}
-                """,
-                params_base,
-            )
-        else:
-            conn.execute(
-                f"""
-                UPDATE leads
-                SET status = 'paid',
-                    paid_at = datetime('now'),
-                    invoice_reminder_at = NULL,
-                    next_service_due_at = date('now', '+{days} days'),
-                    service_reminder_at = date('now', '+{days} days'),
-                    last_contact_at = datetime('now'),
-                    follow_up_after = NULL,
-                    review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
-                {where}
-                """,
-                params_base,
-            )
+        conn.execute(
+            f"""
+            UPDATE leads
+            SET status = 'paid',
+                paid_at = datetime('now'),
+                invoice_reminder_at = NULL,
+                {svc_fields}
+                last_contact_at = datetime('now'),
+                follow_up_after = NULL,
+                review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
+            {where}
+            """,
+            params_base,
+        )
         log_event(conn, "lead_paid", user_id=user_id, lead_id=lead_id)
 
 

@@ -1394,7 +1394,7 @@ async function submitInvoice(){
 
 // Paid
 async function doPaid(id){
-  const r=await fetch('/api/leads/'+id+'/paid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recurring_days:90})});
+  const r=await fetch('/api/leads/'+id+'/paid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
   if(r.ok){toast('Marked paid! 🎉');load();}else{toast('Error',true);}
 }
 

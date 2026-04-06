@@ -77,7 +77,7 @@ def run_daily_digest():
     for days in [30, 60, 90]:
         react = get_reactivation_leads(days)
         if react:
-            label = f"{days}+ days" if days >= 90 else f"{days}–59 days"
+            label = f"{days}+ days" if days >= 90 else f"{days}–{days + 29} days"
             print(f"\n=== Reactivation — {label} ({len(react)}) ===")
             for lead in react:
                 print(f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'}")

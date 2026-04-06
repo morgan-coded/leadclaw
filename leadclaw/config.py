@@ -17,7 +17,7 @@ except ImportError:
 # Update this default when a newer model is preferred, or set LEADCLAW_MODEL in .env
 MODEL = os.getenv("LEADCLAW_MODEL", "claude-haiku-4-5-20251001")
 
-# Shared status display labels
+# Shared status display labels (emoji)
 STATUS_LABELS = {
     "new": "🆕 New",
     "quoted": "💬 Quoted",
@@ -27,6 +27,18 @@ STATUS_LABELS = {
     "paid": "💰 Paid",
     "won": "✅ Won",
     "lost": "❌ Lost",
+}
+
+# Plain-text status labels for --plain / no-emoji output
+STATUS_LABELS_PLAIN = {
+    "new": "[new]",
+    "quoted": "[quoted]",
+    "followup_due": "[followup_due]",
+    "booked": "[booked]",
+    "completed": "[completed]",
+    "paid": "[paid]",
+    "won": "[won]",
+    "lost": "[lost]",
 }
 
 # Valid loss reasons
@@ -40,7 +52,9 @@ LOST_REASONS = [
     "other",
 ]
 
+# Default follow-up window for new leads and quotes (days until the next nudge)
 DEFAULT_FOLLOWUP_DAYS = 3
+# Fallback recurring service interval when not explicitly set and service type is unknown
 DEFAULT_RECURRING_DAYS = int(os.getenv("LEADCLAW_RECURRING_DAYS", "90"))
 DEFAULT_INVOICE_REMINDER_DAYS = int(os.getenv("LEADCLAW_INVOICE_REMINDER_DAYS", "3"))
 MAX_FIELD_LENGTH = 500
