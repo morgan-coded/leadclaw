@@ -425,7 +425,7 @@ def mark_booked(lead_id: int, scheduled_date: str, user_id: Optional[int] = None
 
 
 def mark_completed(lead_id: int, user_id: Optional[int] = None):
-    """Mark a booked job as completed."""
+    """Mark a booked job as completed. Auto-sets review_reminder_at to tomorrow."""
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params = (lead_id, user_id) if user_id is not None else (lead_id,)
     with get_conn() as conn:
@@ -434,7 +434,8 @@ def mark_completed(lead_id: int, user_id: Optional[int] = None):
             UPDATE leads
             SET status = 'completed',
                 completed_at = datetime('now'),
-                last_contact_at = datetime('now')
+                last_contact_at = datetime('now'),
+                review_reminder_at = date('now', '+1 days')
             {where}
             """,
             params,
@@ -474,7 +475,11 @@ def mark_paid(
     recurring_days: Optional[int] = None,
     user_id: Optional[int] = None,
 ):
-    """Mark a lead as paid. Optionally schedule a recurring service reminder."""
+    """Mark a lead as paid. Optionally schedule a recurring service reminder.
+
+    Also sets review_reminder_at to tomorrow if not already set (COALESCE preserves
+    any value set by mark_completed so a future dismiss action won't lose it).
+    """
     from leadclaw.config import DEFAULT_RECURRING_DAYS
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params_base = (lead_id, user_id) if user_id is not None else (lead_id,)
@@ -490,7 +495,8 @@ def mark_paid(
                 next_service_due_at = date('now', '+{days} days'),
                 service_reminder_at = date('now', '+{days} days'),
                 last_contact_at = datetime('now'),
-                follow_up_after = NULL
+                follow_up_after = NULL,
+                review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
             {where}
             """,
             params_base,
@@ -541,6 +547,124 @@ def get_invoice_reminders(user_id: Optional[int] = None):
             ORDER BY invoice_reminder_at ASC
             """
         ).fetchall()
+
+
+def get_job_today_leads(user_id: Optional[int] = None):
+    """Booked leads with scheduled_date = today."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        if user_id is not None:
+            return conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE status = 'booked'
+                  AND date(scheduled_date) = ?
+                  AND user_id = ?
+                ORDER BY scheduled_date ASC
+                """,
+                (today, user_id),
+            ).fetchall()
+        return conn.execute(
+            """
+            SELECT * FROM leads
+            WHERE status = 'booked'
+              AND date(scheduled_date) = ?
+            ORDER BY scheduled_date ASC
+            """,
+            (today,),
+        ).fetchall()
+
+
+def get_review_reminders(user_id: Optional[int] = None):
+    """Leads where review_reminder_at is today or past.
+
+    Column is intentionally kept non-null-cleared so a future dismiss action
+    can simply set review_reminder_at = NULL to suppress the reminder.
+    """
+    with get_conn() as conn:
+        if user_id is not None:
+            return conn.execute(
+                """
+                SELECT * FROM leads
+                WHERE review_reminder_at IS NOT NULL
+                  AND date(review_reminder_at) <= date('now')
+                  AND user_id = ?
+                ORDER BY review_reminder_at ASC
+                """,
+                (user_id,),
+            ).fetchall()
+        return conn.execute(
+            """
+            SELECT * FROM leads
+            WHERE review_reminder_at IS NOT NULL
+              AND date(review_reminder_at) <= date('now')
+            ORDER BY review_reminder_at ASC
+            """
+        ).fetchall()
+
+
+def get_reactivation_leads(days: int, user_id: Optional[int] = None):
+    """
+    Leads in pre-job statuses (new, quoted, followup_due) with no last_contact_at
+    activity in the given range.
+
+    Bucket ranges (non-overlapping):
+      days=30  → last_contact_at is 30-59 days ago
+      days=60  → last_contact_at is 60-89 days ago
+      days=90  → last_contact_at is 90+ days ago (no upper bound)
+
+    Accepts `days` as the lower bound; upper bound is days+30 (except 90 which is open).
+    """
+    lower = f"-{days}"
+    if days >= 90:
+        # Open upper bound: 90+ days
+        upper_clause = ""
+        upper_params: tuple = ()
+    else:
+        upper_clause = "AND date(last_contact_at) > date('now', ? || ' days')"
+        upper_params = (f"-{days + 30}",)
+
+    with get_conn() as conn:
+        if user_id is not None:
+            return conn.execute(
+                f"""
+                SELECT * FROM leads
+                WHERE status IN ('new', 'quoted', 'followup_due')
+                  AND last_contact_at IS NOT NULL
+                  AND date(last_contact_at) <= date('now', ? || ' days')
+                  {upper_clause}
+                  AND user_id = ?
+                ORDER BY last_contact_at ASC
+                """,
+                (lower, *upper_params, user_id),
+            ).fetchall()
+        return conn.execute(
+            f"""
+            SELECT * FROM leads
+            WHERE status IN ('new', 'quoted', 'followup_due')
+              AND last_contact_at IS NOT NULL
+              AND date(last_contact_at) <= date('now', ? || ' days')
+              {upper_clause}
+            ORDER BY last_contact_at ASC
+            """,
+            (lower, *upper_params),
+        ).fetchall()
+
+
+def set_review_reminder(lead_id: int, days: int = 1, user_id: Optional[int] = None):
+    """Manually set or update review_reminder_at for a lead.
+
+    Pass days=0 to set it to today (useful in tests).
+    A future 'dismiss' action can call this with NULL or just UPDATE directly.
+    """
+    modifier = f"+{days} days"
+    where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
+    params = (modifier, lead_id, user_id) if user_id is not None else (modifier, lead_id)
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE leads SET review_reminder_at = date('now', ?) {where}",
+            params,
+        )
 
 
 def get_service_reminders(user_id: Optional[int] = None):

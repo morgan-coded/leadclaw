@@ -178,6 +178,84 @@ def summarize_pilot_reply(candidate: dict, reply_text: str) -> Optional[str]:
     return _call(prompt, max_tokens=200)
 
 
+# ---------------------------------------------------------------------------
+# Message templates (no AI — pure string formatting, always deterministic)
+# ---------------------------------------------------------------------------
+
+MSG_TYPES = [
+    "quote_followup",
+    "booking_confirmation",
+    "on_my_way",
+    "running_late",
+    "review_request",
+    "reactivation_30",
+    "reactivation_60",
+    "reactivation_90",
+]
+
+
+def draft_message(lead: dict, msg_type: str) -> str:
+    """
+    Generate a short, copy-ready message for a lead based on msg_type.
+    Uses string templates only — no AI, no API calls, always deterministic.
+    Returns the message string (never None).
+    """
+    name = (lead.get("name") or "there").split()[0]  # first name only
+    service = lead.get("service") or "the job"
+    raw_date = lead.get("scheduled_date") or ""
+    scheduled = str(raw_date)[:10] if raw_date else "your scheduled date"
+    quote_amt = lead.get("quote_amount")
+    quote = f"${quote_amt:,.0f}" if quote_amt else ""
+
+    templates = {
+        "quote_followup": (
+            f"Hey {name}, just wanted to follow up on the quote"
+            + (f" for {service}" if service != "the job" else "")
+            + (f" ({quote})" if quote else "")
+            + ". Do you have any questions or want to get scheduled?"
+        ),
+        "booking_confirmation": (
+            f"Hey {name}, confirming your {service} appointment"
+            + (f" on {scheduled}" if scheduled != "your scheduled date" else "")
+            + ". Let me know if you need to reschedule. Looking forward to it!"
+        ),
+        "on_my_way": (
+            f"Hey {name}, I'm on my way for {service} today."
+            + " See you soon!"
+        ),
+        "running_late": (
+            f"Hey {name}, heads up — I'm running about 15 minutes behind for {service} today."
+            + " I'll be there shortly, thanks for your patience!"
+        ),
+        "review_request": (
+            f"Hey {name}, thanks for choosing us for {service}!"
+            + " If you were happy with the work, a quick Google review would mean a lot."
+            + " Here's the link: [YOUR REVIEW LINK]"
+        ),
+        "reactivation_30": (
+            f"Hey {name}, just checking in — still interested in {service}?"
+            + " Happy to get you scheduled if the timing works."
+        ),
+        "reactivation_60": (
+            f"Hey {name}, it's been a little while — wanted to see if you're still thinking about {service}."
+            + " No pressure, just here if you need us."
+        ),
+        "reactivation_90": (
+            f"Hey {name}, hope all is well! Reaching out one more time about {service}."
+            + " If you've found someone else, totally understand — just let me know either way."
+        ),
+    }
+
+    if msg_type not in templates:
+        return f"Unknown message type: {msg_type}. Valid types: {', '.join(MSG_TYPES)}"
+
+    return templates[msg_type]
+
+
+# ---------------------------------------------------------------------------
+# AI pipeline analysis
+# ---------------------------------------------------------------------------
+
 def summarize_pipeline(leads: list, summary_rows: list) -> Optional[str]:
     status_counts = {row["status"]: row["count"] for row in summary_rows}
     open_statuses = {"new", "quoted", "followup_due"}

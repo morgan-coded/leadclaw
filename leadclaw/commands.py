@@ -18,8 +18,10 @@ from leadclaw.config import (
     STATUS_LABELS,
 )
 from leadclaw.drafting import (
+    MSG_TYPES,
     check_api_key,
     draft_followup,
+    draft_message,
     draft_pilot_outreach,
     summarize_lead,
     summarize_pilot_reply,
@@ -32,9 +34,12 @@ from leadclaw.queries import (
     get_all_leads,
     get_closed_summary,
     get_invoice_reminders,
+    get_job_today_leads,
     get_lead_by_id,
     get_lead_by_name,
     get_pipeline_summary,
+    get_reactivation_leads,
+    get_review_reminders,
     get_service_reminders,
     get_stale_leads,
     get_today_leads,
@@ -429,25 +434,66 @@ def cmd_next_service(args):
 
 
 def cmd_reminders(args):
-    """Show all pending invoice and service reminders."""
+    """Show all pending reminders across all categories."""
+    job_today = get_job_today_leads()
     invoice_due = get_invoice_reminders()
+    review_due = get_review_reminders()
     service_due = get_service_reminders()
+    react_30 = get_reactivation_leads(30)
+    react_60 = get_reactivation_leads(60)
+    react_90 = get_reactivation_leads(90)
 
-    if not invoice_due and not service_due:
+    any_results = any([job_today, invoice_due, review_due, service_due, react_30, react_60, react_90])
+
+    if not any_results:
         print("No pending reminders.")
         return
 
-    if invoice_due:
-        print(f"=== Invoice Reminders ({len(invoice_due)}) ===\n")
-        for lead in invoice_due:
-            amt = f"${lead['invoice_amount']:,.0f}" if lead['invoice_amount'] else f"${lead['quote_amount']:,.0f}" if lead['quote_amount'] else "(no amount)"
-            print(f"  [{lead['id']}] {lead['name']} — {amt} — sent {str(lead.get('invoice_sent_at', ''))[:10]}")
-        print()
+    def _print_section(title, leads, extra_fn=None):
+        if not leads:
+            return
+        print(f"\n=== {title} ({len(leads)}) ===")
+        for lead in leads:
+            base = f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'}"
+            extra = extra_fn(lead) if extra_fn else ""
+            print(base + extra)
 
-    if service_due:
-        print(f"=== Recurring Service Due ({len(service_due)}) ===\n")
-        for lead in service_due:
-            print(f"  [{lead['id']}] {lead['name']} — {lead['service'] or 'N/A'} — due {str(lead['service_reminder_at'])[:10]}")
+    def _invoice_extra(lead):
+        if lead.get('invoice_amount'):
+            return f" — ${lead['invoice_amount']:,.0f}"
+        if lead.get('quote_amount'):
+            return f" — ${lead['quote_amount']:,.0f}"
+        return ""
+
+    _print_section("Jobs Today", job_today,
+        lambda lead: f" — scheduled {str(lead.get('scheduled_date') or '')[:10]}")
+    _print_section("Invoice Reminders", invoice_due, _invoice_extra)
+    _print_section("Review Requests", review_due,
+        lambda lead: f" — completed {str(lead.get('completed_at') or '')[:10]}")
+    _print_section("Recurring Service Due", service_due,
+        lambda lead: f" — due {str(lead.get('service_reminder_at') or '')[:10]}")
+    _print_section("Reactivation — 30 days", react_30)
+    _print_section("Reactivation — 60 days", react_60)
+    _print_section("Reactivation — 90 days", react_90)
+
+    print(f"\nTip: leadclaw draft-message <name> --type <type>")
+
+
+def cmd_draft_message(args):
+    """Generate a copy-ready message for a lead by type."""
+    lead = resolve_lead(getattr(args, "name", ""), getattr(args, "id", None))
+    if not lead:
+        return
+    msg_type = args.type
+    if msg_type not in MSG_TYPES:
+        print(f"Unknown type '{msg_type}'. Valid types:")
+        for t in MSG_TYPES:
+            print(f"  {t}")
+        return
+    msg = draft_message(dict(lead), msg_type)
+    print(f"\n--- {msg_type.replace('_', ' ').title()} ---")
+    print(msg)
+    print()
 
 
 def cmd_draft(args):
@@ -732,7 +778,24 @@ def build_parser():
     p_nextsvc.add_argument("date", help="Next service date (YYYY-MM-DD)")
     p_nextsvc.add_argument("--id", type=int)
 
-    sub.add_parser("reminders", help="Show pending invoice and service reminders")
+    sub.add_parser("reminders", help="Show all pending reminders (jobs, invoices, reviews, reactivations)")
+
+    p_dm = sub.add_parser(
+        "draft-message",
+        help="Generate a copy-ready message for a lead",
+        epilog=(
+            "Types: quote_followup, booking_confirmation, on_my_way, running_late,\n"
+            "       review_request, reactivation_30, reactivation_60, reactivation_90\n\n"
+            "Examples:\n"
+            "  leadclaw draft-message Mike --type quote_followup\n"
+            "  leadclaw draft-message --id 7 --type on_my_way"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_dm.add_argument("name", nargs="?", default="")
+    p_dm.add_argument("--id", type=int)
+    p_dm.add_argument("--type", required=True, dest="type",
+                      help="Message type (see --help for full list)")
 
     p_draft = sub.add_parser(
         "draft-followup",
@@ -1128,6 +1191,7 @@ COMMAND_MAP = {
     "paid": cmd_paid,
     "next-service": cmd_next_service,
     "reminders": cmd_reminders,
+    "draft-message": cmd_draft_message,
     "draft-followup": cmd_draft,
     "summarize": cmd_summarize,
     "digest": cmd_digest,

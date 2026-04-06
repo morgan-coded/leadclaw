@@ -72,8 +72,11 @@ from leadclaw.queries import (
     get_all_active_leads,
     get_all_leads,
     get_invoice_reminders,
+    get_job_today_leads,
     get_lead_by_id,
     get_pipeline_summary,
+    get_reactivation_leads,
+    get_review_reminders,
     get_service_reminders,
     get_stale_leads,
     get_today_leads,
@@ -471,6 +474,7 @@ def _lead_to_dict(row) -> dict:
         "next_service_due_at": str(_safe_col("next_service_due_at"))[:10] if _safe_col("next_service_due_at") else None,
         "invoice_reminder_at": str(_safe_col("invoice_reminder_at"))[:10] if _safe_col("invoice_reminder_at") else None,
         "service_reminder_at": str(_safe_col("service_reminder_at"))[:10] if _safe_col("service_reminder_at") else None,
+        "review_reminder_at": str(_safe_col("review_reminder_at"))[:10] if _safe_col("review_reminder_at") else None,
     }
 
 
@@ -516,6 +520,11 @@ def api_summary(user_id: int) -> dict:
         "active": active,
         "invoice_reminders": [_lead_to_dict(r) for r in get_invoice_reminders(user_id=user_id)],
         "service_reminders": [_lead_to_dict(r) for r in get_service_reminders(user_id=user_id)],
+        "job_today": [_lead_to_dict(r) for r in get_job_today_leads(user_id=user_id)],
+        "review_reminders": [_lead_to_dict(r) for r in get_review_reminders(user_id=user_id)],
+        "reactivation_30": [_lead_to_dict(r) for r in get_reactivation_leads(30, user_id=user_id)],
+        "reactivation_60": [_lead_to_dict(r) for r in get_reactivation_leads(60, user_id=user_id)],
+        "reactivation_90": [_lead_to_dict(r) for r in get_reactivation_leads(90, user_id=user_id)],
     }
 
 
@@ -721,9 +730,14 @@ def _build_dashboard_html(user_email: str) -> str:
     <section><h2>Active Pipeline</h2><div class="lead-list" id="active"></div></section>
   </div>
   <div class="tab-panel" id="tab-reminders">
+    <section><h2>Jobs Today</h2><div class="lead-list" id="jobs-today"></div></section>
     <section><h2>Quote Follow-ups Overdue</h2><div class="lead-list" id="remind-stale"></div></section>
     <section><h2>Invoice Reminders</h2><div class="lead-list" id="invoice-reminders"></div></section>
+    <section><h2>Review Requests</h2><div class="lead-list" id="review-reminders"></div></section>
     <section><h2>Recurring Service Due</h2><div class="lead-list" id="service-reminders"></div></section>
+    <section><h2>Reactivation &mdash; 30&ndash;59 Days</h2><div class="lead-list" id="reactivation-30"></div></section>
+    <section><h2>Reactivation &mdash; 60&ndash;89 Days</h2><div class="lead-list" id="reactivation-60"></div></section>
+    <section><h2>Reactivation &mdash; 90+ Days</h2><div class="lead-list" id="reactivation-90"></div></section>
   </div>
   <div class="tab-panel" id="tab-more">
     <section><h2>Closed Leads</h2><div class="lead-list" id="closed"></div></section>
@@ -1062,8 +1076,81 @@ async function load(){
     const sr=d.service_reminders||[];
     renderList('invoice-reminders',ir,{emptyMsg:'No overdue invoices.'});
     renderList('service-reminders',sr,{emptyMsg:'No recurring service due.'});
+
+    // Jobs today
+    renderRemSection('jobs-today',d.job_today||[],[
+      {label:'On My Way',type:'on_my_way',cls:'btn-primary'},
+      {label:'Running Late',type:'running_late',cls:''}
+    ],'No jobs today.');
+
+    // Review requests
+    renderRemSection('review-reminders',d.review_reminders||[],[
+      {label:'Copy Review Request',type:'review_request',cls:'btn-primary'}
+    ],'No review requests due.');
+
+    // Reactivation buckets
+    renderRemSection('reactivation-30',d.reactivation_30||[],[
+      {label:'Copy Message',type:'reactivation_30',cls:''}
+    ],'None.');
+    renderRemSection('reactivation-60',d.reactivation_60||[],[
+      {label:'Copy Message',type:'reactivation_60',cls:''}
+    ],'None.');
+    renderRemSection('reactivation-90',d.reactivation_90||[],[
+      {label:'Copy Message',type:'reactivation_90',cls:''}
+    ],'None.');
+
     _lastLoaded['today']=_lastLoaded['pipeline']=_lastLoaded['reminders']=Date.now();
   }catch(e){console.error(e);}
+}
+
+// Message templates (mirrors Python draft_message — deterministic, no API call)
+function draftMessage(lead,msgType){
+  const name=(lead.name||'there').split(' ')[0];
+  const service=lead.service||'the job';
+  const scheduled=lead.scheduled_date||'your scheduled date';
+  const quoteAmt=lead.quote_amount?'$'+Number(lead.quote_amount).toLocaleString(undefined,{maximumFractionDigits:0}):'';
+  const templates={
+    quote_followup:'Hey '+name+', just wanted to follow up on the quote'+(service!=='the job'?' for '+service:'')+(quoteAmt?' ('+quoteAmt+')':'')+'. Do you have any questions or want to get scheduled?',
+    booking_confirmation:'Hey '+name+', confirming your '+service+' appointment'+(scheduled!=='your scheduled date'?' on '+scheduled:'')+'. Let me know if you need to reschedule. Looking forward to it!',
+    on_my_way:'Hey '+name+", I'm on my way for "+service+' today. See you soon!',
+    running_late:'Hey '+name+", heads up \u2014 I'm running about 15 minutes behind for "+service+" today. I'll be there shortly, thanks for your patience!",
+    review_request:'Hey '+name+', thanks for choosing us for '+service+'! If you were happy with the work, a quick Google review would mean a lot. Here\'s the link: [YOUR REVIEW LINK]',
+    reactivation_30:'Hey '+name+', just checking in \u2014 still interested in '+service+'? Happy to get you scheduled if the timing works.',
+    reactivation_60:'Hey '+name+", it's been a little while \u2014 wanted to see if you're still thinking about "+service+'. No pressure, just here if you need us.',
+    reactivation_90:'Hey '+name+', hope all is well! Reaching out one more time about '+service+". If you've found someone else, totally understand \u2014 just let me know either way.",
+  };
+  return templates[msgType]||'';
+}
+
+async function copyMessage(lead,msgType){
+  const msg=draftMessage(lead,msgType);
+  if(!msg){toast('Unknown message type',true);return;}
+  try{
+    await navigator.clipboard.writeText(msg);
+    toast('Message copied!');
+  }catch(e){
+    prompt('Copy this message:',msg);
+  }
+}
+
+// Render a reminders section with copy-message buttons
+function renderRemSection(containerId,leads,buttons,emptyMsg){
+  const el=document.getElementById(containerId);
+  if(!el)return;
+  if(!leads||!leads.length){el.innerHTML='<div class="empty">'+(emptyMsg||'None.')+'</div>';return;}
+  el.innerHTML=leads.map(function(l){
+    const lj=esc(JSON.stringify(l));
+    const btns=buttons.map(function(b){
+      return '<button class="btn btn-sm '+(b.cls||'')+'" onclick=\'copyMessage(JSON.parse(this.dataset.l),"'+b.type+'")\' data-l="'+lj+'">'+esc(b.label)+'</button>';
+    }).join('');
+    return '<div class="lead" data-id="'+l.id+'" data-status="'+l.status+'">'
+      +'<div class="lead-card-body">'
+      +'<div class="lead-header"><div><div class="lead-name">'+esc(l.name)+'</div></div>'+badge(l.status)+'</div>'
+      +'<div class="lead-sub">'+esc(l.service||'')+'</div>'
+      +'<div class="lead-secondary-row" style="margin-top:8px">'+btns+'</div>'
+      +'</div>'
+      +'</div>';
+  }).join('');
 }
 
 async function loadClosed(){
@@ -1499,6 +1586,28 @@ def route_get_lead(lead_id):
     if lead:
         return jsonify(_lead_to_dict(lead))
     return jsonify({"error": "Not found"}), 404
+
+
+# ---------------------------------------------------------------------------
+# Message template route
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/leads/<int:lead_id>/draft-message", methods=["POST"])
+@login_required
+@verified_required
+def route_draft_message(lead_id):
+    """Return a copy-ready message for a lead. Pure template, no AI."""
+    from leadclaw.drafting import MSG_TYPES, draft_message
+    lead = get_lead_by_id(lead_id, user_id=current_user.id)
+    if not lead:
+        return jsonify({"error": "Not found"}), 404
+    data = request.get_json(silent=True) or {}
+    msg_type = data.get("type", "")
+    if msg_type not in MSG_TYPES:
+        return jsonify({"error": f"Invalid type. Valid: {', '.join(MSG_TYPES)}"}), 400
+    msg = draft_message(dict(lead), msg_type)
+    return jsonify({"message": msg, "type": msg_type})
 
 
 # ---------------------------------------------------------------------------

@@ -66,7 +66,8 @@ def init_db():
                 created_at        TEXT NOT NULL DEFAULT (datetime('now')),
                 last_contact_at   TEXT,
                 follow_up_after   TEXT,
-                notes             TEXT
+                notes             TEXT,
+                review_reminder_at TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_leads_status          ON leads(status);
@@ -117,6 +118,7 @@ def init_db():
             "next_service_due_at TEXT",
             "invoice_reminder_at TEXT",
             "service_reminder_at TEXT",
+            "review_reminder_at TEXT",
         ]
         for col_def in new_columns:
             col_name = col_def.split()[0]
