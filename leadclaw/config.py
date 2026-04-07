@@ -25,7 +25,7 @@ STATUS_LABELS = {
     "booked": "📅 Booked",
     "completed": "🔧 Completed",
     "paid": "💰 Paid",
-    "won": "✅ Won",
+    "won": "💰 Paid",
     "lost": "❌ Lost",
 }
 
@@ -37,7 +37,7 @@ STATUS_LABELS_PLAIN = {
     "booked": "[booked]",
     "completed": "[completed]",
     "paid": "[paid]",
-    "won": "[won]",
+    "won": "[paid]",
     "lost": "[lost]",
 }
 

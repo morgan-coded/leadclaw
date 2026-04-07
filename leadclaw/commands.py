@@ -350,7 +350,7 @@ def cmd_won(args):
     if not lead:
         return
     mark_won(lead["id"])
-    print(f"[{lead['id']}] {lead['name']} marked as WON (tip: use 'paid' for the full lifecycle)")
+    print(f"[{lead['id']}] {lead['name']} marked as PAID (tip: use 'paid' for the full lifecycle)")
 
 
 def cmd_lost(args):

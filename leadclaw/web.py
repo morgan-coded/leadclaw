@@ -388,13 +388,25 @@ UNVERIFIED_HTML = (
 # Public service request form
 # ---------------------------------------------------------------------------
 
-_REQUEST_SERVICES = [
+_DEFAULT_SERVICES = [
     "Lawn Mowing",
     "Landscaping",
     "Cleanup",
     "Mulching",
     "Other",
 ]
+
+
+def _load_request_services() -> list:
+    """Load service list from LEADCLAW_SERVICES env var (comma-separated) or use defaults."""
+    raw = os.environ.get("LEADCLAW_SERVICES", "").strip()
+    if not raw:
+        return _DEFAULT_SERVICES
+    services = [s.strip() for s in raw.split(",") if s.strip()]
+    return services if services else _DEFAULT_SERVICES
+
+
+_REQUEST_SERVICES = _load_request_services()
 
 _REQUEST_TIME_WINDOWS = [
     ("morning", "Morning (8am–12pm)"),
@@ -1091,7 +1103,8 @@ def route_api_summary():
     try:
         return jsonify(api_summary(current_user.id))
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"API error: {e}", file=sys.stderr)
+        return jsonify({"error": "An internal error occurred"}), 500
 
 
 @app.route("/api/closed")
@@ -1101,7 +1114,8 @@ def route_api_closed():
     try:
         return jsonify(api_closed(current_user.id))
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"API error: {e}", file=sys.stderr)
+        return jsonify({"error": "An internal error occurred"}), 500
 
 
 @app.route("/api/pilot")
@@ -1112,7 +1126,8 @@ def route_api_pilot():
     try:
         return jsonify(api_pilot_candidates(current_user.id, status=status))
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"API error: {e}", file=sys.stderr)
+        return jsonify({"error": "An internal error occurred"}), 500
 
 
 @app.route("/api/leads/<int:lead_id>")
@@ -1401,7 +1416,8 @@ def route_get_availability():
         avail["working_days_hint"] = _avail.working_days_hint(avail)
         return jsonify(avail)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"API error: {e}", file=sys.stderr)
+        return jsonify({"error": "An internal error occurred"}), 500
 
 
 @app.route("/api/availability", methods=["POST"])
@@ -1461,7 +1477,8 @@ def route_api_requests():
         rows = get_public_requests(user_id=current_user.id, filter=filter_val)
         return jsonify({"requests": [_lead_to_dict(r) for r in rows]})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"API error: {e}", file=sys.stderr)
+        return jsonify({"error": "An internal error occurred"}), 500
 
 
 @app.route("/api/requests/<int:lead_id>/seen", methods=["POST"])
@@ -1514,7 +1531,8 @@ def route_api_usage():
     try:
         return jsonify(api_usage(current_user.id))
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"API error: {e}", file=sys.stderr)
+        return jsonify({"error": "An internal error occurred"}), 500
 
 
 # ---------------------------------------------------------------------------
