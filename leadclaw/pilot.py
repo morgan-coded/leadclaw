@@ -267,7 +267,7 @@ def update_candidate(cid: int, user_id: Optional[int] = None, **fields):
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
-    updates["last_updated_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    updates["last_updated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"
     params = (*updates.values(), cid, user_id) if user_id is not None else (*updates.values(), cid)

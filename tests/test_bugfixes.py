@@ -537,6 +537,7 @@ def test_set_availability_duplicates_deduplicated():
 def test_notify_from_email_used_in_resend_path(monkeypatch):
     """NOTIFY_FROM_EMAIL must be used as 'from' in the Resend payload."""
     import json as _json
+
     import leadclaw.web as web_mod
 
     monkeypatch.setenv("NOTIFY_FROM_EMAIL", "Custom Sender <custom@example.com>")
@@ -588,16 +589,22 @@ def test_notify_from_email_used_in_smtp_path(monkeypatch):
     class FakeSMTP:
         def __init__(self, host, port, timeout=None):
             pass
+
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             pass
+
         def ehlo(self):
             pass
+
         def starttls(self):
             pass
+
         def login(self, user, pw):
             pass
+
         def sendmail(self, from_addr, to_addrs, msg_str):
             sent_from["from"] = from_addr
 
@@ -620,6 +627,7 @@ def test_notify_from_email_used_in_smtp_path(monkeypatch):
 def test_notify_from_email_default_resend_path(monkeypatch):
     """Without NOTIFY_FROM_EMAIL set, the Resend 'from' falls back to the default."""
     import json as _json
+
     import leadclaw.web as web_mod
 
     monkeypatch.delenv("NOTIFY_FROM_EMAIL", raising=False)

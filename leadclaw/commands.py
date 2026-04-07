@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Optional
 
 import leadclaw.pilot as _pilot
-from leadclaw.web import send_pilot_outreach_email
 from leadclaw.config import (
     DEFAULT_FOLLOWUP_DAYS,
     LOST_REASONS,
@@ -60,6 +59,7 @@ from leadclaw.queries import (
     update_lead,
     update_quote,
 )
+from leadclaw.web import send_pilot_outreach_email
 
 # Runtime flag — set by main() based on --plain
 _PLAIN = False
@@ -350,7 +350,7 @@ def cmd_won(args):
     if not lead:
         return
     mark_won(lead["id"])
-    print(f"[{lead['id']}] {lead['name']} marked as WON (tip: use 'paid' for the full lifecycle)")
+    print(f"[{lead['id']}] {lead['name']} marked as PAID (tip: use 'paid' for the full lifecycle)")
 
 
 def cmd_lost(args):
@@ -1175,19 +1175,21 @@ def cmd_pilot(args):
             # Mark as approved first
             _pilot.set_status(c["id"], "approved")
             print(f"[{c['id']}] {c['name']} → approved. Sending...")
-            
+
             # Try to send the email
             subject = f"Pilot Invite: {c.get('company', 'LeadClaw')}"
             body = c["outreach_draft"]
             sent = send_pilot_outreach_email(c["email"], subject, body)
-            
+
             if sent:
                 # Mark as sent on successful email send
                 _pilot.set_status(c["id"], "sent", contacted=True)
                 print(f"[{c['id']}] {c['name']} → sent. Follow-up scheduled.")
             else:
-                print(f"[{c['id']}] {c['name']} → Email failed. Candidate marked approved but not sent.")
-                print("Try again with: leadclaw pilot approve {c['name']}")
+                print(
+                    f"[{c['id']}] {c['name']} → Email failed. Candidate marked approved but not sent."
+                )
+                print(f"Try again with: leadclaw pilot approve {c['name']}")
         else:
             print("Not approved. Run pilot draft again to regenerate.")
 
