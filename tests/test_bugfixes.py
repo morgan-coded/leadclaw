@@ -529,6 +529,136 @@ def test_set_availability_duplicates_deduplicated():
     assert avail["allowed_weekdays"] == [0, 2, 4]
 
 
+# ---------------------------------------------------------------------------
+# NOTIFY_FROM_EMAIL wired into both Resend and SMTP paths
+# ---------------------------------------------------------------------------
+
+
+def test_notify_from_email_used_in_resend_path(monkeypatch):
+    """NOTIFY_FROM_EMAIL must be used as 'from' in the Resend payload."""
+    import json as _json
+    import leadclaw.web as web_mod
+
+    monkeypatch.setenv("NOTIFY_FROM_EMAIL", "Custom Sender <custom@example.com>")
+    monkeypatch.setenv("RESEND_API_KEY", "test-key-fake")
+    monkeypatch.setenv("OWNER_NOTIFY_EMAIL", "owner@example.com")
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+
+    captured_payload = {}
+
+    class FakeReq:
+        def __init__(self, url, data=None, method=None, headers=None):
+            if data:
+                captured_payload.update(_json.loads(data))
+
+    fake_resp = MagicMock()
+    mock_urlopen = MagicMock(return_value=fake_resp)
+
+    with patch("urllib.request.Request", FakeReq):
+        with patch("urllib.request.urlopen", mock_urlopen):
+            web_mod._send_new_request_notification(
+                {
+                    "name": "Test User",
+                    "service": "Lawn Mowing",
+                    "phone": "555-1234",
+                    "service_address": "123 Main",
+                    "requested_date": None,
+                    "requested_time_window": None,
+                    "notes": None,
+                }
+            )
+
+    assert captured_payload.get("from") == "Custom Sender <custom@example.com>"
+
+
+def test_notify_from_email_used_in_smtp_path(monkeypatch):
+    """NOTIFY_FROM_EMAIL must be used as the From address in the SMTP MIMEText message."""
+    import leadclaw.web as web_mod
+
+    monkeypatch.setenv("NOTIFY_FROM_EMAIL", "smtp-custom@example.com")
+    monkeypatch.setenv("OWNER_NOTIFY_EMAIL", "owner@example.com")
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USER", "smtpuser@example.com")
+    monkeypatch.setenv("SMTP_PASS", "secret")
+
+    sent_from = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def ehlo(self):
+            pass
+        def starttls(self):
+            pass
+        def login(self, user, pw):
+            pass
+        def sendmail(self, from_addr, to_addrs, msg_str):
+            sent_from["from"] = from_addr
+
+    with patch("smtplib.SMTP", FakeSMTP):
+        web_mod._send_new_request_notification(
+            {
+                "name": "SMTP User",
+                "service": "Pressure Washing",
+                "phone": "555-4321",
+                "service_address": "456 Oak",
+                "requested_date": None,
+                "requested_time_window": None,
+                "notes": None,
+            }
+        )
+
+    assert sent_from.get("from") == "smtp-custom@example.com"
+
+
+def test_notify_from_email_default_resend_path(monkeypatch):
+    """Without NOTIFY_FROM_EMAIL set, the Resend 'from' falls back to the default."""
+    import json as _json
+    import leadclaw.web as web_mod
+
+    monkeypatch.delenv("NOTIFY_FROM_EMAIL", raising=False)
+    monkeypatch.setenv("RESEND_API_KEY", "test-key-fake")
+    monkeypatch.setenv("OWNER_NOTIFY_EMAIL", "owner@example.com")
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+
+    captured_payload = {}
+
+    class FakeReq:
+        def __init__(self, url, data=None, method=None, headers=None):
+            if data:
+                captured_payload.update(_json.loads(data))
+
+    fake_resp = MagicMock()
+    mock_urlopen = MagicMock(return_value=fake_resp)
+
+    with patch("urllib.request.Request", FakeReq):
+        with patch("urllib.request.urlopen", mock_urlopen):
+            web_mod._send_new_request_notification(
+                {
+                    "name": "Test",
+                    "service": "Gutters",
+                    "phone": "555-0000",
+                    "service_address": "789 Elm",
+                    "requested_date": None,
+                    "requested_time_window": None,
+                    "notes": None,
+                }
+            )
+
+    # Should be the default noreply address
+    assert captured_payload.get("from") is not None
+    assert "@" in captured_payload["from"]
+
+
+# ---------------------------------------------------------------------------
+
+
 def test_set_availability_invalid_blocked_dates_ignored():
     """Invalid blocked date strings should be silently ignored."""
     from leadclaw.availability import get_availability, set_availability

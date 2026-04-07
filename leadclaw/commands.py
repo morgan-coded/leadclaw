@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Optional
 
 import leadclaw.pilot as _pilot
+from leadclaw.web import send_pilot_outreach_email
 from leadclaw.config import (
     DEFAULT_FOLLOWUP_DAYS,
     LOST_REASONS,
@@ -1171,10 +1172,22 @@ def cmd_pilot(args):
         print()
         confirm = input("Approve for sending? (yes/no): ").strip().lower()
         if confirm == "yes":
+            # Mark as approved first
             _pilot.set_status(c["id"], "approved")
-            print(
-                f"[{c['id']}] {c['name']} → approved. Mark sent when you've sent it: leadclaw pilot mark-sent {c['name']}"
-            )
+            print(f"[{c['id']}] {c['name']} → approved. Sending...")
+            
+            # Try to send the email
+            subject = f"Pilot Invite: {c.get('company', 'LeadClaw')}"
+            body = c["outreach_draft"]
+            sent = send_pilot_outreach_email(c["email"], subject, body)
+            
+            if sent:
+                # Mark as sent on successful email send
+                _pilot.set_status(c["id"], "sent", contacted=True)
+                print(f"[{c['id']}] {c['name']} → sent. Follow-up scheduled.")
+            else:
+                print(f"[{c['id']}] {c['name']} → Email failed. Candidate marked approved but not sent.")
+                print("Try again with: leadclaw pilot approve {c['name']}")
         else:
             print("Not approved. Run pilot draft again to regenerate.")
 

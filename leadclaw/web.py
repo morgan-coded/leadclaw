@@ -550,7 +550,7 @@ def _send_new_request_notification(lead: dict):
             smtp_port = int(os.environ.get("SMTP_PORT", 587))
             smtp_user = os.environ.get("SMTP_USER", "")
             smtp_pass = os.environ.get("SMTP_PASS", "")
-            from_addr = smtp_user or owner_email
+            from_addr = _notify_from_email()
             msg = MIMEText(body, "plain")
             msg["Subject"] = subject
             msg["From"] = from_addr
@@ -569,6 +569,81 @@ def _send_new_request_notification(lead: dict):
         )
     except Exception as exc:
         print(f"[NOTIFY] Failed to send owner notification: {exc}", file=sys.stderr)
+
+
+def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
+    """
+    Send pilot outreach email via Resend API or SMTP.
+    Returns True if sent successfully, False otherwise.
+    
+    Args:
+        to_email: recipient email
+        subject: email subject
+        body: email body (plain text)
+    """
+    resend_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    if resend_key:
+        import urllib.error
+        import urllib.request
+
+        payload = _json.dumps(
+            {
+                "from": _notify_from_email(),
+                "to": [to_email],
+                "subject": subject,
+                "text": body,
+            }
+        ).encode()
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {resend_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "LeadClaw/1.0",
+            },
+        )
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            print(f"[PILOT] Outreach sent to {to_email} via Resend", file=sys.stderr)
+            return True
+        except urllib.error.HTTPError as exc:
+            body_resp = exc.read().decode(errors="replace")
+            print(f"[PILOT] Resend failed {exc.code}: {body_resp}", file=sys.stderr)
+            return False
+        except Exception as exc:
+            print(f"[PILOT] Resend failed: {exc}", file=sys.stderr)
+            return False
+
+    # SMTP fallback
+    smtp_host = os.environ.get("SMTP_HOST")
+    if not smtp_host:
+        print(f"[PILOT] No Resend or SMTP configured. Email not sent to {to_email}", file=sys.stderr)
+        return False
+
+    try:
+        smtp_port = int(os.environ.get("SMTP_PORT", 587))
+        smtp_user = os.environ.get("SMTP_USER", "")
+        smtp_pass = os.environ.get("SMTP_PASS", "")
+        from_addr = _notify_from_email()
+
+        msg = MIMEText(body, "plain")
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        msg["To"] = to_email
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(from_addr, [to_email], msg.as_string())
+        
+        print(f"[PILOT] Outreach sent to {to_email} via SMTP", file=sys.stderr)
+        return True
+    except Exception as exc:
+        print(f"[PILOT] SMTP failed: {exc}", file=sys.stderr)
+        return False
 
 
 @app.route("/request", methods=["GET", "POST"])
