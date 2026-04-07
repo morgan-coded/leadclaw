@@ -141,10 +141,10 @@ def init_db():
 
         # --- Column migrations: add user_id to leads ---
         # SQLite doesn't support IF NOT EXISTS on ALTER TABLE ADD COLUMN
+        # Also, SQLite doesn't allow REFERENCES in ALTER TABLE with NOT NULL DEFAULT
         try:
             conn.execute(
-                "ALTER TABLE leads ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1 "
-                "REFERENCES users(id) ON DELETE CASCADE"
+                "ALTER TABLE leads ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1"
             )
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
@@ -159,8 +159,7 @@ def init_db():
         # --- Column migrations: add user_id to pilot_candidates ---
         try:
             conn.execute(
-                "ALTER TABLE pilot_candidates ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1 "
-                "REFERENCES users(id) ON DELETE CASCADE"
+                "ALTER TABLE pilot_candidates ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1"
             )
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
@@ -175,7 +174,7 @@ def init_db():
         # --- Availability settings table ---
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS availability (
-                user_id       INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                user_id       INTEGER PRIMARY KEY,
                 allowed_weekdays TEXT NOT NULL DEFAULT '[0,1,2,3,4]',
                 blocked_dates    TEXT NOT NULL DEFAULT '[]',
                 updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
