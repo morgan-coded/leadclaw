@@ -575,7 +575,7 @@ def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
     """
     Send pilot outreach email via Resend API or SMTP.
     Returns True if sent successfully, False otherwise.
-    
+
     Args:
         to_email: recipient email
         subject: email subject
@@ -619,7 +619,9 @@ def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
     # SMTP fallback
     smtp_host = os.environ.get("SMTP_HOST")
     if not smtp_host:
-        print(f"[PILOT] No Resend or SMTP configured. Email not sent to {to_email}", file=sys.stderr)
+        print(
+            f"[PILOT] No Resend or SMTP configured. Email not sent to {to_email}", file=sys.stderr
+        )
         return False
 
     try:
@@ -638,7 +640,7 @@ def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
             server.starttls()
             server.login(smtp_user, smtp_pass)
             server.sendmail(from_addr, [to_email], msg.as_string())
-        
+
         print(f"[PILOT] Outreach sent to {to_email} via SMTP", file=sys.stderr)
         return True
     except Exception as exc:

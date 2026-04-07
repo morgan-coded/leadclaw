@@ -6,8 +6,20 @@ import os
 import sqlite3
 from contextlib import contextmanager
 
-_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.getenv("LEADCLAW_DB", os.path.join(_BASE, "data", "leads.db"))
+
+def _default_db_path() -> str:
+    """Return a sensible default DB path in the user's data directory."""
+    env = os.environ.get("LEADCLAW_DB")
+    if env:
+        return env
+    # XDG_DATA_HOME or ~/.local/share on Linux/macOS
+    data_home = os.environ.get("XDG_DATA_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "share"
+    )
+    return os.path.join(data_home, "leadclaw", "leads.db")
+
+
+DB_PATH = _default_db_path()
 
 
 @contextmanager
@@ -143,9 +155,7 @@ def init_db():
         # SQLite doesn't support IF NOT EXISTS on ALTER TABLE ADD COLUMN
         # Also, SQLite doesn't allow REFERENCES in ALTER TABLE with NOT NULL DEFAULT
         try:
-            conn.execute(
-                "ALTER TABLE leads ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1"
-            )
+            conn.execute("ALTER TABLE leads ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise

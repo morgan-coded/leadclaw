@@ -238,8 +238,8 @@ def draft_message(lead: dict, msg_type: str) -> str:
         ),
         "review_request": (
             f"Hey {name}, thanks for choosing us for {service}!"
-            + " If you were happy with the work, a quick Google review would mean a lot."
-            + " Here's the link: [YOUR REVIEW LINK]"
+            + " If you were happy with the work, a quick Google review would mean a lot — just"
+            + " search our business name on Google and click the reviews link. Thanks!"
         ),
         "reactivation_30": (
             f"Hey {name}, just checking in — still interested in {service}?"
