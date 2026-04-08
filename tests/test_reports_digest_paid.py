@@ -10,7 +10,7 @@ Covers:
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import pytest
@@ -169,7 +169,7 @@ def test_api_paid_negative_amount_rejected(auth_client):
 
 def test_report_stats_empty_db():
     """get_report_stats should return zeros for empty date range."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     start = now.replace(day=1).strftime("%Y-%m-%d")
     end = (now.replace(day=28) + timedelta(days=4)).replace(day=1).strftime("%Y-%m-%d")
     stats = queries.get_report_stats(1, start, end)
@@ -191,7 +191,7 @@ def test_report_stats_with_data():
 
     lid3, _ = queries.add_lead("Charlie", "cleanup", user_id=1)  # still new
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     start = (now - timedelta(days=1)).strftime("%Y-%m-%d")
     end = (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
