@@ -759,6 +759,47 @@ def test_logout_redirects(auth_client):
 
 
 # ---------------------------------------------------------------------------
+# PWA manifest and icon tests
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_returns_valid_json_with_icons(client):
+    """GET /manifest.json returns 200 with both icon entries."""
+    r = client.get("/manifest.json")
+    assert r.status_code == 200
+    data = json.loads(r.data)
+    assert data["name"] == "LeadClaw"
+    assert data["short_name"] == "LeadClaw"
+    assert data["start_url"] == "/"
+    assert data["scope"] == "/"
+    assert data["display"] == "standalone"
+    assert data["background_color"] == "#0f1117"
+    assert data["theme_color"] == "#6366f1"
+    icons = data["icons"]
+    assert len(icons) == 2
+    srcs = {ic["src"] for ic in icons}
+    assert "/static/icon-192.png" in srcs
+    assert "/static/icon-512.png" in srcs
+    for ic in icons:
+        assert ic["type"] == "image/png"
+        assert "sizes" in ic
+
+
+def test_icon_192_served(client):
+    """GET /static/icon-192.png returns 200 with image/png content type."""
+    r = client.get("/static/icon-192.png")
+    assert r.status_code == 200
+    assert r.content_type == "image/png"
+
+
+def test_icon_512_served(client):
+    """GET /static/icon-512.png returns 200 with image/png content type."""
+    r = client.get("/static/icon-512.png")
+    assert r.status_code == 200
+    assert r.content_type == "image/png"
+
+
+# ---------------------------------------------------------------------------
 # Public service request form
 # ---------------------------------------------------------------------------
 

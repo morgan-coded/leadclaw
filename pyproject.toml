@@ -35,7 +35,7 @@ leadclaw-web = "leadclaw.web:main"
 where = ["."]
 
 [tool.setuptools.package-data]
-leadclaw = ["templates/*.html"]
+leadclaw = ["templates/*.html", "static/*"]
 
 [tool.ruff]
 line-length = 100
