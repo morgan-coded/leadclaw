@@ -15,7 +15,7 @@ Covers:
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import pytest
@@ -58,7 +58,7 @@ def auth_client(client):
     uid = create_user("owner@example.com", pw_hash, "tok")
     verify_user_email(uid)
     set_user_slug(uid, "test-slug-123")
-    trial_end = (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
     update_user_stripe(uid, subscription_status="trialing", trial_ends_at=trial_end)
 
     client.post("/login", data={"email": "owner@example.com", "password": "password123"})
@@ -180,7 +180,7 @@ def test_request_slug_expired_sub_404_when_stripe_enabled(client):
     uid = create_user("expired-slug@example.com", pw_hash, "etok")
     verify_user_email(uid)
     set_user_slug(uid, "expired-slug")
-    expired = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    expired = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
     update_user_stripe(uid, subscription_status="trialing", trial_ends_at=expired)
 
     original = web_mod._STRIPE_ENABLED

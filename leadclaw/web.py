@@ -45,7 +45,7 @@ import secrets
 import smtplib
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 
 import bcrypt
@@ -246,7 +246,7 @@ class User(UserMixin):
         if self.subscription_status == "active":
             return True
         if self.subscription_status == "trialing" and self.trial_ends_at:
-            return self.trial_ends_at > datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            return self.trial_ends_at > datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
         return False
 
     @property
@@ -258,7 +258,7 @@ class User(UserMixin):
             end = datetime.strptime(self.trial_ends_at[:19], "%Y-%m-%d %H:%M:%S")
         except (ValueError, TypeError):
             return 0
-        delta = (end - datetime.utcnow()).days
+        delta = (end - datetime.now(timezone.utc).replace(tzinfo=None)).days
         return max(delta, 0)
 
 
@@ -717,7 +717,7 @@ def send_followup_digest(user_id: int) -> bool:
     subject = f"You have {count} lead{'s' if count != 1 else ''} to follow up on"
 
     lines = ["These leads are due for follow-up:", ""]
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
     for lead in overdue[:10]:
         name = lead["name"] or "Unknown"
         service = lead["service"] or ""
@@ -1090,7 +1090,7 @@ def signup():
     token = secrets.token_urlsafe(32)
     uid = create_user(email, pw_hash, token)
     # Set 14-day trial period
-    trial_end = (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
     update_user_stripe(uid, subscription_status="trialing", trial_ends_at=trial_end)
     # Generate request slug for per-user /request/<slug> URL
     slug = secrets.token_urlsafe(8)
@@ -1120,7 +1120,7 @@ def verify_email(token):
     # Set trial if not already set (covers users who signed up before Stripe was added)
     try:
         if not row["trial_ends_at"]:
-            trial_end = (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+            trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
             update_user_stripe(row["id"], subscription_status="trialing", trial_ends_at=trial_end)
     except (KeyError, IndexError):
         pass
@@ -1936,7 +1936,7 @@ def route_api_usage():
 def route_api_reports():
     """Return reporting stats for the current user."""
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         this_month_start = now.replace(day=1).strftime("%Y-%m-%d")
         if now.month == 12:
             next_month_start = now.replace(year=now.year + 1, month=1, day=1).strftime("%Y-%m-%d")
@@ -2243,9 +2243,9 @@ def _update_subscription_status(stripe_customer_id: str, status: str, sub_obj=No
     if sub_obj:
         period_end = sub_obj.get("current_period_end")
         if period_end:
-            from datetime import datetime as _dt
-
-            fields["subscription_ends_at"] = _dt.utcfromtimestamp(period_end).strftime(
+            fields["subscription_ends_at"] = datetime.fromtimestamp(
+                period_end, tz=timezone.utc
+            ).strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
 
