@@ -143,6 +143,8 @@ def init_db():
             "scheduled_time_window TEXT",
             # Feature: new request notifications
             "request_seen_at TEXT",
+            # Feature: mark-paid-with-amount
+            "actual_amount REAL",
         ]
         for col_def in new_columns:
             try:
@@ -213,6 +215,45 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        # --- Column migration: add notify_new_requests to users ---
+        try:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN notify_new_requests INTEGER NOT NULL DEFAULT 1"
+            )
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+        # --- Column migrations: Stripe billing fields on users ---
+        _stripe_user_cols = [
+            "stripe_customer_id TEXT",
+            "subscription_status TEXT NOT NULL DEFAULT 'trialing'",
+            "trial_ends_at TEXT",
+            "subscription_ends_at TEXT",
+        ]
+        for col_def in _stripe_user_cols:
+            try:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col_def}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+
+        # --- Column migrations: request slug + business name on users ---
+        _slug_user_cols = [
+            "request_slug TEXT",
+            "business_name TEXT",
+        ]
+        for col_def in _slug_user_cols:
+            try:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col_def}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+        # Unique index on request_slug (CREATE INDEX IF NOT EXISTS is safe to re-run)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_request_slug ON users(request_slug)"
+        )
+
         # Ensure the default CLI user (id=1) exists so FK DEFAULT 1 is always valid
         conn.execute(
             """
@@ -272,6 +313,48 @@ def verify_user_email(user_id: int):
         conn.execute(
             "UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?",
             (user_id,),
+        )
+
+
+def update_user_stripe(user_id: int, **fields):
+    """Update Stripe-related fields on a user row.
+
+    Valid keys: stripe_customer_id, subscription_status, trial_ends_at, subscription_ends_at.
+    """
+    _allowed = {"stripe_customer_id", "subscription_status", "trial_ends_at", "subscription_ends_at"}
+    updates = {k: v for k, v in fields.items() if k in _allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    vals = list(updates.values()) + [user_id]
+    with get_conn() as conn:
+        conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", vals)
+
+
+def get_user_by_slug(slug: str):
+    """Return the users row for a given request_slug, or None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE request_slug = ?",
+            (slug,),
+        ).fetchone()
+
+
+def set_user_slug(user_id: int, slug: str):
+    """Set the request_slug on a user row."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET request_slug = ? WHERE id = ?",
+            (slug, user_id),
+        )
+
+
+def update_verify_token(user_id: int, token: str):
+    """Replace the verification token for a user (used for resend flow)."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET verify_token = ? WHERE id = ?",
+            (token, user_id),
         )
 
 

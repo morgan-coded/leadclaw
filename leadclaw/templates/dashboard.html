@@ -11,7 +11,7 @@
 <style>
   :root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2a2d3a;--text:#e8eaf0;--muted:#6b7280;--accent:#6366f1;--accent-h:#4f52d1;--green:#22c55e;--yellow:#f59e0b;--red:#ef4444;}
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;
+  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:16px;line-height:1.5;
        padding-bottom:max(72px,calc(60px + env(safe-area-inset-bottom)));}
   header{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;
          position:sticky;top:0;background:var(--bg);z-index:100;}
@@ -20,23 +20,22 @@
   .header-email{font-size:11px;color:var(--muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:6px 12px;
        border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);
-       cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s;min-height:36px;}
+       cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s;min-height:44px;}
   .btn:hover{border-color:var(--accent);color:var(--accent);}
   .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
   .btn-primary:hover{background:var(--accent-h);border-color:var(--accent-h);color:#fff;}
-  .btn-sm{padding:3px 8px;font-size:11px;min-height:28px;}
+  .btn-sm{padding:3px 8px;font-size:11px;min-height:44px;}
   .btn-danger{color:var(--red)!important;}
   .btn-danger:hover{border-color:var(--red)!important;}
   .btn-add{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;
            padding:6px 12px;font-size:13px;border-radius:8px;white-space:nowrap;min-height:36px;
            display:inline-flex;align-items:center;cursor:pointer;font-family:inherit;border:none;}
-  .stats-bar{display:flex;gap:8px;padding:12px 16px;overflow-x:auto;scrollbar-width:none;
+  .stats-bar{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px;
              border-bottom:1px solid var(--border);}
-  .stats-bar::-webkit-scrollbar{display:none;}
   .stat-pill{display:flex;flex-direction:column;align-items:center;gap:2px;
              background:var(--surface);border:1px solid var(--border);border-radius:20px;
-             padding:6px 14px;white-space:nowrap;flex-shrink:0;}
-  .stat-val{font-size:15px;font-weight:700;}
+             padding:8px 14px;white-space:nowrap;flex:1 0 calc(50% - 4px);min-width:0;}
+  .stat-val{font-size:18px;font-weight:700;}
   .stat-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
   .green{color:var(--green);}.yellow{color:var(--yellow);}.red{color:var(--red);}.accent{color:var(--accent);}
   .bottom-nav{position:fixed;bottom:0;left:0;right:0;height:60px;background:var(--surface);
@@ -141,12 +140,25 @@
   .reminder-btns{display:flex;gap:8px;flex-wrap:wrap;}
   .reminder-btns .btn{flex:1;min-width:0;min-height:44px;}
   .btn-dismiss{color:var(--muted)!important;font-size:12px;min-height:40px!important;padding:6px 12px!important;}
-  .usage-table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;}
+  .usage-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .usage-table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;min-width:320px;}
   .usage-table th{text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);border-bottom:1px solid var(--border);}
   .usage-table td{padding:10px;border-bottom:1px solid var(--border);}
   .usage-table tr:last-child td{border-bottom:none;}
+  .trial-banner{padding:10px 16px;background:#1e293b;border-bottom:1px solid #334155;
+                 display:none;align-items:center;gap:10px;font-size:13px;color:#f59e0b;}
+  .trial-banner a{color:#6366f1;font-weight:600;text-decoration:none;}
+  .trial-banner a:hover{text-decoration:underline;}
+  .trial-banner .trial-cta{margin-left:auto;white-space:nowrap;}
+  .action-bar{display:flex;gap:6px;margin-bottom:8px;}
+  .action-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;
+              min-height:44px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);
+              background:var(--surface2);color:var(--text);text-decoration:none;
+              font-size:13px;font-weight:500;font-family:inherit;flex:1;white-space:nowrap;cursor:pointer;transition:border-color .15s;}
+  .action-btn:hover{border-color:var(--accent);}
+  .action-btn-icon{font-size:15px;line-height:1;}
   @media(min-width:768px){
-    body{padding-bottom:0;}
+    body{padding-bottom:0;font-size:14px;}
     header{padding:14px 24px;}
     header h1{font-size:18px;}
     .header-email{max-width:none;}
@@ -156,8 +168,12 @@
               border-radius:0;height:44px;}
     .nav-icon{font-size:16px;}
     .nav-item.active{border-bottom:2px solid var(--accent);color:var(--accent);}
-    .stats-bar{padding:16px 24px;gap:12px;}
-    .stat-pill{padding:8px 18px;}
+    .stats-bar{padding:16px 24px;gap:12px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;}
+    .stats-bar::-webkit-scrollbar{display:none;}
+    .stat-pill{padding:8px 18px;flex:0 0 auto;min-width:auto;}
+    .stat-val{font-size:15px;}
+    .btn-sm{min-height:28px;}
+    .action-btn{flex:none;font-size:12px;padding:4px 10px;min-height:36px;}
     .main{max-width:1140px;margin:0 auto;}
     .tab-panel{padding:24px;}
     .lead-primary-btn{display:none;}
@@ -181,6 +197,15 @@
     <a href="/logout" style="font-size:11px;color:var(--muted);text-decoration:none;padding:4px;">Out</a>
   </div>
 </header>
+<div class="trial-banner" id="trial-banner">
+  <span id="trial-banner-text"></span>
+  <span class="trial-cta"><a href="/billing/checkout">Subscribe</a> · <a href="/billing/portal">Manage</a></span>
+</div>
+<div class="request-url-bar" id="request-url-bar" style="display:none;padding:8px 16px;background:#1e293b;border-bottom:1px solid #334155;font-size:12px;color:var(--muted);align-items:center;gap:8px;">
+  <span>&#x1F517; Your request page:</span>
+  <code id="request-url-text" style="color:var(--accent);word-break:break-all;flex:1"></code>
+  <button onclick="copyRequestUrl()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;white-space:nowrap">Copy link</button>
+</div>
 <div class="stats-bar" id="stats-bar"></div>
 <nav class="bottom-nav">
   <button class="nav-item active" id="nav-today" onclick="switchTab('today')">
@@ -196,6 +221,9 @@
   <button class="nav-item" id="nav-requests" onclick="switchTab('requests')" style="position:relative">
     <span class="nav-icon">&#x1F4E5;</span>Requests
     <span id="requests-badge" style="display:none;position:absolute;top:6px;right:calc(50% - 22px);background:var(--accent);color:#fff;font-size:9px;font-weight:700;border-radius:8px;padding:1px 5px;"></span>
+  </button>
+  <button class="nav-item" id="nav-reports" onclick="switchTab('reports')">
+    <span class="nav-icon">&#x1F4CA;</span>Reports
   </button>
   <button class="nav-item" id="nav-more" onclick="switchTab('more')">
     <span class="nav-icon">&#x2630;</span>More
@@ -244,6 +272,12 @@
         </div>
       </div>
       <div id="req-list"><div class="empty">Loading...</div></div>
+    </section>
+  </div>
+  <div class="tab-panel" id="tab-reports">
+    <section>
+      <h2>Business Reports</h2>
+      <div id="reports-content"><div class="empty">Loading...</div></div>
     </section>
   </div>
   <div class="tab-panel" id="tab-more">
@@ -513,7 +547,7 @@ document.querySelectorAll('.sheet-overlay').forEach(el=>{
 
 // Tab switching
 const _lastLoaded={};
-const TAB_NAMES=['today','pipeline','reminders','requests','more'];
+const TAB_NAMES=['today','pipeline','reminders','requests','reports','more'];
 function switchTab(name){
   TAB_NAMES.forEach(t=>{
     const nb=document.getElementById('nav-'+t);
@@ -526,6 +560,7 @@ function switchTab(name){
   if(stale){
     if(name==='today'||name==='pipeline'||name==='reminders')load();
     if(name==='requests')loadRequests();
+    if(name==='reports')loadReports();
     if(name==='more'){loadClosed();loadPilot();loadUsage();loadAvailability();}
     _lastLoaded[name]=now;
   }
@@ -535,14 +570,21 @@ function switchTab(name){
 function renderLead(l,opts){
   opts=opts||{};
   const showActions=opts.showActions!==false;
-  const contact=[l.phone,l.email].filter(Boolean).join(' \u00b7 ');
+  const actionBtns=[];
+  if(l.phone){
+    actionBtns.push('<a href="tel:'+esc(l.phone)+'" class="action-btn"><span class="action-btn-icon">📞</span> Call</a>');
+    actionBtns.push('<a href="sms:'+esc(l.phone)+'" class="action-btn"><span class="action-btn-icon">💬</span> Text</a>');
+  }
+  if(l.email)actionBtns.push('<a href="mailto:'+esc(l.email)+'" class="action-btn"><span class="action-btn-icon">✉️</span> Email</a>');
+  const actionBar=actionBtns.length?'<div class="action-bar">'+actionBtns.join('')+'</div>':'';
 
   let alertHtml='';
   if(l.status==='followup_due')alertHtml='<div class="lead-alert">🔔 Follow-up Due</div>';
   else if(l.status==='new')alertHtml='<div class="lead-alert" style="color:var(--accent)">🆕 New Lead</div>';
 
   const metaParts=[];
-  if(l.quote_amount)metaParts.push('Quote: '+fmt(l.quote_amount));
+  if(l.actual_amount)metaParts.push('Paid: '+fmt(l.actual_amount));
+  else if(l.quote_amount)metaParts.push('Quote: '+fmt(l.quote_amount));
   if(l.invoice_amount)metaParts.push('Invoice: '+fmt(l.invoice_amount));
   if(l.scheduled_date)metaParts.push('Scheduled: '+l.scheduled_date);
   if(l.paid_at)metaParts.push('Paid: '+l.paid_at);
@@ -565,7 +607,8 @@ function renderLead(l,opts){
       if(!l.invoice_sent_at){
         primaryBtn='<button class="lead-primary-btn" onclick="openInvoice('+l.id+','+(l.quote_amount||0)+')">Send Invoice</button>';
       } else {
-        primaryBtn='<button class="lead-primary-btn" onclick="doPaid('+l.id+')">Mark Paid</button>';
+        primaryBtn='<button class="lead-primary-btn" onclick="doPaid('+l.id+','+(l.quote_amount||'')+')
+">Mark Paid</button>';
       }
       secondaryBtns.push('<button class="btn btn-danger" onclick="openLost('+l.id+')">Lost</button>');
     } else if(l.status==='paid'){
@@ -598,7 +641,8 @@ function renderLead(l,opts){
       da.push('<button class="btn btn-sm btn-danger" onclick="openLost('+l.id+')">Lost</button>');
     } else if(l.status==='completed'){
       if(!l.invoice_sent_at)da.push('<button class="btn btn-sm btn-primary" onclick="openInvoice('+l.id+','+(l.quote_amount||0)+')">Invoice</button>');
-      else da.push('<button class="btn btn-sm btn-primary" onclick="doPaid('+l.id+')">Mark Paid</button>');
+      else da.push('<button class="btn btn-sm btn-primary" onclick="doPaid('+l.id+','+(l.quote_amount||'')+')
+">Mark Paid</button>');
       da.push('<button class="btn btn-sm btn-danger" onclick="openLost('+l.id+')">Lost</button>');
     } else if(l.status==='paid'){
       da.push('<button class="btn btn-sm" onclick="openNextService('+l.id+')">Next Svc</button>');
@@ -616,7 +660,8 @@ function renderLead(l,opts){
   return '<div class="lead" data-id="'+l.id+'" data-status="'+l.status+'">'
     +'<div class="lead-card-body">'
     +'<div class="lead-header"><div>'+alertHtml+'<div class="lead-name">'+esc(l.name)+sourceBadge+'</div></div>'+badge(l.status)+'</div>'
-    +'<div class="lead-sub">'+esc(l.service||'')+(contact?' \u00b7 '+esc(contact):'')+'</div>'
+    +'<div class="lead-sub">'+esc(l.service||'')+'</div>'
+    +actionBar
     +notesHtml
     +metaRow
     +primaryBtn
@@ -774,6 +819,13 @@ function renderRemSection(containerId,leads,buttons,emptyMsg,dismissType){
     const dismissBtn=dismissType
       ?'<button class="btn btn-sm btn-dismiss" onclick="dismissReminder('+l.id+',\''+dismissType+'\',this)">Dismiss</button>'
       :'';
+    const remActions=[];
+    if(l.phone){
+      remActions.push('<a href="tel:'+esc(l.phone)+'" class="action-btn"><span class="action-btn-icon">📞</span> Call</a>');
+      remActions.push('<a href="sms:'+esc(l.phone)+'" class="action-btn"><span class="action-btn-icon">💬</span> Text</a>');
+    }
+    if(l.email)remActions.push('<a href="mailto:'+esc(l.email)+'" class="action-btn"><span class="action-btn-icon">✉️</span> Email</a>');
+    const remActionBar=remActions.length?'<div class="action-bar">'+remActions.join('')+'</div>':'';
     const metaParts=[];
     if(l.scheduled_date)metaParts.push('Scheduled: '+l.scheduled_date);
     if(l.next_service_due_at)metaParts.push('Next svc: '+l.next_service_due_at);
@@ -781,8 +833,9 @@ function renderRemSection(containerId,leads,buttons,emptyMsg,dismissType){
     return '<div class="reminder-card" data-id="'+l.id+'" data-status="'+l.status+'">'
       +'<div class="reminder-card-header"><div>'
       +'<div class="reminder-card-name">'+esc(l.name)+'</div>'
-      +'<div class="reminder-card-sub">'+esc(l.service||'')+(l.phone?' \u00b7 '+esc(l.phone):'')+'</div>'
+      +'<div class="reminder-card-sub">'+esc(l.service||'')+'</div>'
       +'</div>'+badge(l.status)+'</div>'
+      +remActionBar
       +metaHtml
       +'<div class="reminder-btns">'+btns+dismissBtn+'</div>'
       +'</div>';
@@ -807,11 +860,11 @@ async function loadUsage(){
     const l30Map={};last30.forEach(function(r){l30Map[r.event_type]=r.count;});
     const typeArr=[...new Set([...alltime.map(function(r){return r.event_type;}),...last30.map(function(r){return r.event_type;})])].sort();
     if(!typeArr.length){el.innerHTML='<div class="empty">No events yet.</div>';return;}
-    let html='<table class="usage-table"><thead><tr><th>Event</th><th>Last 30 Days</th><th>All Time</th></tr></thead><tbody>';
+    let html='<div class="usage-table-wrap"><table class="usage-table"><thead><tr><th>Event</th><th>Last 30 Days</th><th>All Time</th></tr></thead><tbody>';
     typeArr.forEach(function(t){
       html+='<tr><td>'+esc(t.replace(/_/g,' '))+'</td><td>'+(l30Map[t]||0)+'</td><td>'+(atMap[t]||0)+'</td></tr>';
     });
-    html+='</tbody></table>';
+    html+='</tbody></table></div>';
     el.innerHTML=html;
   }catch(e){el.innerHTML='<div class="empty">Error loading usage.</div>';}
 }
@@ -955,8 +1008,13 @@ async function submitInvoice(){
 }
 
 // Paid
-async function doPaid(id){
-  const r=await fetch('/api/leads/'+id+'/paid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+async function doPaid(id,prefill){
+  const input=prompt('Amount received'+(prefill?' (pre-filled from quote)':'')+':',prefill||'');
+  if(input===null)return; // cancelled
+  const body={};
+  const val=parseFloat(input);
+  if(!isNaN(val)&&val>=0)body.actual_amount=val;
+  const r=await fetch('/api/leads/'+id+'/paid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok){toast('Marked paid! 🎉');load();}else{toast('Error',true);}
 }
 
@@ -1286,12 +1344,17 @@ function renderRequestCard(r){
   const fields=[];
   if(r.service)fields.push(['Service',esc(r.service)]);
   if(r.service_address)fields.push(['Address',esc(r.service_address)]);
-  if(r.phone)fields.push(['Phone',esc(r.phone)]);
-  if(r.email)fields.push(['Email',esc(r.email)]);
   if(r.requested_date)fields.push(['Pref. Date',esc(r.requested_date)]);
   if(r.requested_time_window)fields.push(['Pref. Time',esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)]);
   if(r.notes)fields.push(['Notes',esc(r.notes)]);
   if(r.scheduled_date)fields.push(['Booked Date',esc(r.scheduled_date)+(r.scheduled_time_window&&r.scheduled_time_window!=='flexible'?' · '+(TW_LABELS[r.scheduled_time_window]||r.scheduled_time_window):'')]);
+  const reqQA=[];
+  if(r.phone){
+    reqQA.push('<a href="tel:'+esc(r.phone)+'" class="action-btn"><span class="action-btn-icon">📞</span> Call</a>');
+    reqQA.push('<a href="sms:'+esc(r.phone)+'" class="action-btn"><span class="action-btn-icon">💬</span> Text</a>');
+  }
+  if(r.email)reqQA.push('<a href="mailto:'+esc(r.email)+'" class="action-btn"><span class="action-btn-icon">✉️</span> Email</a>');
+  const reqActionBar=reqQA.length?'<div class="action-bar">'+reqQA.join('')+'</div>':'';
   const created=r.created_at?r.created_at.slice(0,10):'';
 
   const rj=esc(JSON.stringify(r));
@@ -1306,11 +1369,12 @@ function renderRequestCard(r){
 
   const headerBadge=isBooked?badge(r.status):'<span class="badge badge-request">Request</span>';
 
-  return '<div class="req-card'+cls+'" data-id="'+r.id+'" data-status="'+r.status+'">'   
+  return '<div class="req-card'+cls+'" data-id="'+r.id+'" data-status="'+r.status+'">'
     +'<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">'
     +'<div><div style="font-size:17px;font-weight:600">'+esc(r.name)+'</div>'
     +(created?'<div style="font-size:11px;color:var(--muted)">Submitted '+created+'</div>':'')
     +'</div>'+headerBadge+'</div>'
+    +reqActionBar
     +fields.map(function(f){return '<div class="req-field"><span class="req-field-label">'+f[0]+'</span><span class="req-field-val">'+f[1]+'</span></div>';}).join('')
     +'<div class="req-actions">'+actions+'</div>'
     +'</div>';
@@ -1369,12 +1433,17 @@ function renderRequestCard(r){
   const fields=[];
   if(r.service)fields.push(['Service',esc(r.service)]);
   if(r.service_address)fields.push(['Address',esc(r.service_address)]);
-  if(r.phone)fields.push(['Phone',esc(r.phone)]);
-  if(r.email)fields.push(['Email',esc(r.email)]);
   if(r.requested_date)fields.push(['Pref. Date',esc(r.requested_date)]);
   if(r.requested_time_window)fields.push(['Pref. Time',esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)]);
   if(r.notes)fields.push(['Notes',esc(r.notes)]);
   if(r.scheduled_date)fields.push(['Booked Date',esc(r.scheduled_date)+(r.scheduled_time_window&&r.scheduled_time_window!=='flexible'?' \u00b7 '+(TW_LABELS[r.scheduled_time_window]||r.scheduled_time_window):'')]);
+  const rqa2=[];
+  if(r.phone){
+    rqa2.push('<a href="tel:'+esc(r.phone)+'" class="action-btn"><span class="action-btn-icon">📞</span> Call</a>');
+    rqa2.push('<a href="sms:'+esc(r.phone)+'" class="action-btn"><span class="action-btn-icon">💬</span> Text</a>');
+  }
+  if(r.email)rqa2.push('<a href="mailto:'+esc(r.email)+'" class="action-btn"><span class="action-btn-icon">✉️</span> Email</a>');
+  const rqa2Bar=rqa2.length?'<div class="action-bar">'+rqa2.join('')+'</div>':'';
   const created=r.created_at?r.created_at.slice(0,10):'';
 
   const rj=esc(JSON.stringify(r));
@@ -1395,6 +1464,7 @@ function renderRequestCard(r){
     +'<div><div style="font-size:17px;font-weight:600">'+esc(r.name)+newBadge+'</div>'
     +(created?'<div style="font-size:11px;color:var(--muted)">Submitted '+created+'</div>':'')
     +'</div>'+headerBadge+'</div>'
+    +rqa2Bar
     +fields.map(function(f){return '<div class="req-field"><span class="req-field-label">'+f[0]+'</span><span class="req-field-val">'+f[1]+'</span></div>';}).join('')
     +'<div class="req-actions">'+actions+'</div>'
     +'</div>';
@@ -1444,9 +1514,68 @@ async function submitBookRequest(){
   load(); // refresh unseen count
 }
 
+// Billing / trial banner
+// Reports
+async function loadReports(){
+  const el=document.getElementById('reports-content');
+  if(!el)return;
+  try{
+    const d=await fetch('/api/reports').then(r=>r.json());
+    if(d.error){el.innerHTML='<div class="empty">'+esc(d.error)+'</div>';return;}
+    function statCard(title,s,showAvg){
+      if(!s.leads_created&&!s.jobs_completed)return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">'
+        +'<div style="font-size:14px;font-weight:600;margin-bottom:8px">'+esc(title)+'</div>'
+        +'<div class="empty" style="margin:0;padding:8px 0">Complete your first job to see stats here</div></div>';
+      let html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">'
+        +'<div style="font-size:14px;font-weight:600;margin-bottom:12px">'+esc(title)+'</div>'
+        +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:12px">'
+        +'<div><div style="font-size:22px;font-weight:700;color:var(--green)">'+fmt(s.revenue_closed)+'</div><div style="font-size:11px;color:var(--muted)">Revenue</div></div>'
+        +'<div><div style="font-size:22px;font-weight:700">'+s.jobs_completed+'</div><div style="font-size:11px;color:var(--muted)">Jobs</div></div>'
+        +'<div><div style="font-size:22px;font-weight:700">'+s.conversion_rate+'%</div><div style="font-size:11px;color:var(--muted)">Conversion</div></div>';
+      if(showAvg)html+='<div><div style="font-size:22px;font-weight:700">'+fmt(s.average_deal_size)+'</div><div style="font-size:11px;color:var(--muted)">Avg Deal</div></div>';
+      html+='</div></div>';
+      return html;
+    }
+    el.innerHTML=statCard('This Month',d.this_month,false)+statCard('Last Month',d.last_month,false)+statCard('All Time',d.all_time,true);
+  }catch(e){el.innerHTML='<div class="empty">Error loading reports.</div>';}
+}
+
+let _requestUrl='';
+function copyRequestUrl(){
+  if(!_requestUrl)return;
+  navigator.clipboard.writeText(_requestUrl).then(()=>toast('Link copied!')).catch(()=>{});
+}
+async function loadBilling(){
+  try{
+    const b=await fetch('/api/billing').then(r=>r.json());
+    // Request URL bar (always shown if slug exists)
+    if(b.request_url){
+      _requestUrl=b.request_url;
+      document.getElementById('request-url-text').textContent=b.request_url;
+      document.getElementById('request-url-bar').style.display='flex';
+    }
+    // Trial/billing banner (only when Stripe is enabled)
+    if(!b.stripe_enabled)return;
+    const banner=document.getElementById('trial-banner');
+    const txt=document.getElementById('trial-banner-text');
+    if(b.subscription_status==='trialing'){
+      txt.textContent='Trial: '+b.trial_days_remaining+' day'+(b.trial_days_remaining===1?'':'s')+' remaining';
+      banner.style.display='flex';
+    }else if(b.subscription_status==='active'){
+      banner.style.display='none';
+    }else if(b.subscription_status==='past_due'){
+      txt.textContent='Payment past due — update your payment method to avoid service interruption.';
+      banner.style.display='flex';
+    }else if(b.subscription_status==='canceled'){
+      txt.textContent='Your subscription has been canceled.';
+      banner.style.display='flex';
+    }
+  }catch(e){}
+}
 // Init
 switchTab('today');
 load();
+loadBilling();
 
 // Setup checklist — persist in localStorage
 (function(){

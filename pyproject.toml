@@ -16,7 +16,9 @@ dependencies = [
     "python-dotenv~=1.0",
     "flask>=3.0",
     "flask-login>=0.6",
+    "flask-limiter>=3.0",
     "bcrypt>=4.0",
+    "stripe>=7.0",
 ]
 
 [project.urls]
@@ -34,7 +36,7 @@ leadclaw-web = "leadclaw.web:main"
 where = ["."]
 
 [tool.setuptools.package-data]
-leadclaw = ["templates/*.html"]
+leadclaw = ["templates/*.html", "static/*"]
 
 [tool.ruff]
 line-length = 100

@@ -60,3 +60,6 @@ DEFAULT_INVOICE_REMINDER_DAYS = int(os.getenv("LEADCLAW_INVOICE_REMINDER_DAYS", 
 MAX_FIELD_LENGTH = 500
 MAX_NAME_LENGTH = 100
 MAX_LIST_ROWS = 200
+
+# Email verification: set to "0" to auto-verify on signup (for local dev / testing)
+REQUIRE_VERIFICATION = os.getenv("LEADCLAW_REQUIRE_VERIFICATION", "1").strip() != "0"

@@ -12,12 +12,14 @@ Covers:
 """
 
 import io
+import json
 import os
 import sys
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from leadclaw.db import init_db
+from leadclaw.db import get_conn, init_db
 from leadclaw.queries import (
     add_lead,
     get_lead_by_id,
@@ -261,3 +263,128 @@ def test_digest_seen_request_not_in_new_section():
     output = _capture_digest()
     # "New Requests — ACTION NEEDED" section should not appear
     assert "ACTION NEEDED" not in output
+
+
+# ---------------------------------------------------------------------------
+# Email notification on /request submission
+# ---------------------------------------------------------------------------
+
+_REQUEST_DATA = {
+    "name": "Notify Test User",
+    "phone": "512-555-8888",
+    "service": "Lawn Mowing",
+    "service_address": "100 Test St, Austin TX",
+    "requested_time_window": "flexible",
+}
+
+
+def _create_real_user(email="owner@example.com"):
+    """Create a real user (id=1) with a real email for notification tests."""
+    import bcrypt
+
+    pw = bcrypt.hashpw(b"testpass1234", bcrypt.gensalt()).decode()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET email = ?, password_hash = ?, email_verified = 1 WHERE id = 1",
+            (email, pw),
+        )
+
+
+def test_request_triggers_resend_notification(monkeypatch):
+    """Successful /request POST triggers a Resend API call to the owner."""
+    import leadclaw.web as web_mod
+
+    _create_real_user("owner@example.com")
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    monkeypatch.delenv("OWNER_NOTIFY_EMAIL", raising=False)
+
+    mock_urlopen = MagicMock()
+    mock_req_class = MagicMock()
+
+    from leadclaw.web import limiter
+
+    limiter.reset()
+
+    with patch("urllib.request.urlopen", mock_urlopen), patch(
+        "urllib.request.Request", mock_req_class
+    ):
+        client = web_mod.app.test_client()
+        r = client.post("/request", data=_REQUEST_DATA)
+        assert r.status_code == 200
+
+    # Resend API should have been called
+    assert mock_req_class.called
+    call_args = mock_req_class.call_args
+    assert "resend.com" in call_args[0][0]
+    payload = json.loads(call_args[1]["data"])
+    assert payload["to"] == ["owner@example.com"]
+    assert "Notify Test User" in payload["subject"]
+
+
+def test_notification_skipped_when_pref_disabled(monkeypatch):
+    """No notification sent when notify_new_requests = 0."""
+    import leadclaw.web as web_mod
+
+    _create_real_user("owner@example.com")
+    with get_conn() as conn:
+        conn.execute("UPDATE users SET notify_new_requests = 0 WHERE id = 1")
+
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    monkeypatch.delenv("OWNER_NOTIFY_EMAIL", raising=False)
+
+    mock_urlopen = MagicMock()
+
+    from leadclaw.web import limiter
+
+    limiter.reset()
+
+    with patch("urllib.request.urlopen", mock_urlopen):
+        client = web_mod.app.test_client()
+        r = client.post("/request", data=_REQUEST_DATA)
+        assert r.status_code == 200
+
+    # Resend should NOT have been called
+    assert not mock_urlopen.called
+
+
+def test_notification_failure_does_not_break_response(monkeypatch):
+    """A Resend API failure must not affect the 200 success response."""
+    import leadclaw.web as web_mod
+
+    _create_real_user("owner@example.com")
+    monkeypatch.setenv("RESEND_API_KEY", "bad-key")
+    monkeypatch.setenv("OWNER_NOTIFY_EMAIL", "owner@example.com")
+
+    from leadclaw.web import limiter
+
+    limiter.reset()
+
+    with patch("urllib.request.urlopen", side_effect=Exception("network fail")):
+        client = web_mod.app.test_client()
+        r = client.post("/request", data=_REQUEST_DATA)
+    assert r.status_code == 200
+    assert b"Request Received" in r.data
+
+
+def test_honeypot_submission_no_notification(monkeypatch):
+    """Honeypot-caught submissions must not trigger a notification."""
+    import leadclaw.web as web_mod
+
+    _create_real_user("owner@example.com")
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    monkeypatch.setenv("OWNER_NOTIFY_EMAIL", "owner@example.com")
+
+    mock_urlopen = MagicMock()
+
+    from leadclaw.web import limiter
+
+    limiter.reset()
+
+    with patch("urllib.request.urlopen", mock_urlopen):
+        client = web_mod.app.test_client()
+        data = {**_REQUEST_DATA, "website": "http://spam.bot"}
+        r = client.post("/request", data=data)
+        assert r.status_code == 200
+
+    # No Resend call should have been made
+    assert not mock_urlopen.called

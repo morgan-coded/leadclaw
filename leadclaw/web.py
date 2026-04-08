@@ -5,12 +5,14 @@ Entry point:
     leadclaw-web        # uses env vars PORT (default 7432), HOST (default 127.0.0.1)
 
 Auth flow:
-    POST /signup  → create account, send verification email (or print link in dev)
-    GET  /verify/<token>  → mark email verified, log in, redirect to /
-    POST /login   → check password + email_verified, create session
+    POST /signup  → create account, send verification email, show "check your email"
+    POST /login   → check password, create flask-login session
     GET  /logout  → clear session
+    GET  /verify/<token>  → verify email, log in, redirect to dashboard
+    POST /verify/resend   → resend verification email (rate limited 3/hour)
 
-All dashboard routes require @login_required AND email_verified.
+All dashboard routes require @login_required, @verified_required, and @subscription_required.
+Set LEADCLAW_REQUIRE_VERIFICATION=0 to auto-verify on signup (for local dev).
 
 Environment variables:
     LEADCLAW_SECRET_KEY  - Flask secret key (required for prod; fallback prints warning)
@@ -18,6 +20,12 @@ Environment variables:
     PORT                 - Bind port (default: 7432)
     HOST                 - Bind host (default: 127.0.0.1)
     APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
+    LEADCLAW_REQUIRE_VERIFICATION - Set to "0" to auto-verify on signup (default: "1")
+
+Stripe billing env vars (all optional — billing disabled if missing):
+    STRIPE_SECRET_KEY    - Stripe secret key (sk_live_... or sk_test_...)
+    STRIPE_PRICE_ID      - Stripe Price ID for the subscription plan
+    STRIPE_WEBHOOK_SECRET - Webhook endpoint signing secret (whsec_...)
 
 Email / notification env vars (swap these when domain is ready):
     RESEND_API_KEY       - Resend API key (preferred; takes priority over SMTP)
@@ -37,8 +45,7 @@ import secrets
 import smtplib
 import sys
 import time
-from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
 import bcrypt
@@ -50,6 +57,8 @@ from flask import (
     request,
     url_for,
 )
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -66,13 +75,18 @@ from leadclaw.config import (
     LOST_REASONS,
     MAX_FIELD_LENGTH,
     MAX_NAME_LENGTH,
+    REQUIRE_VERIFICATION,
 )
 from leadclaw.db import (
     create_user,
     get_user_by_email,
     get_user_by_id,
+    get_user_by_slug,
     get_user_by_verify_token,
     init_db,
+    set_user_slug,
+    update_user_stripe,
+    update_verify_token,
     verify_user_email,
 )
 from leadclaw.queries import (
@@ -86,9 +100,12 @@ from leadclaw.queries import (
     get_invoice_reminders,
     get_job_today_leads,
     get_lead_by_id,
+    get_overdue_followups,
     get_pipeline_summary,
     get_public_requests,
     get_reactivation_leads,
+    get_report_stats,
+    get_report_stats_all_time,
     get_review_reminders,
     get_service_reminders,
     get_stale_leads,
@@ -124,23 +141,7 @@ def _notify_from_email() -> str:
 # In-memory only — resets on restart. Good enough for low-volume pilot use.
 # ---------------------------------------------------------------------------
 
-_REQUEST_THROTTLE: dict = defaultdict(list)  # ip -> [timestamp, ...]
-_REQUEST_THROTTLE_LIMIT = 5  # max submissions per window
-_REQUEST_THROTTLE_WINDOW = 3600  # 1 hour in seconds
 _REQUEST_MIN_SECONDS = 3  # minimum seconds to fill out the form
-
-
-def _is_throttled(ip: str) -> bool:
-    """Return True if this IP has exceeded the rate limit."""
-    now = time.time()
-    cutoff = now - _REQUEST_THROTTLE_WINDOW
-    _REQUEST_THROTTLE[ip] = [t for t in _REQUEST_THROTTLE[ip] if t > cutoff]
-    return len(_REQUEST_THROTTLE[ip]) >= _REQUEST_THROTTLE_LIMIT
-
-
-def _record_submission(ip: str):
-    """Record a successful submission for this IP."""
-    _REQUEST_THROTTLE[ip].append(time.time())
 
 
 # ---------------------------------------------------------------------------
@@ -165,9 +166,37 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 
+limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
+
+
+@app.errorhandler(429)
+def _ratelimit_handler(e):
+    return jsonify(error="Too many requests. Try again later."), 429
+
+
 # Initialize DB at import time so gunicorn workers have schema ready
 with app.app_context():
     init_db()
+
+# ---------------------------------------------------------------------------
+# Stripe billing configuration
+# ---------------------------------------------------------------------------
+
+_STRIPE_SECRET_KEY = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+_STRIPE_PRICE_ID = (os.environ.get("STRIPE_PRICE_ID") or "").strip()
+_STRIPE_WEBHOOK_SECRET = (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip()
+_STRIPE_ENABLED = bool(_STRIPE_SECRET_KEY and _STRIPE_PRICE_ID)
+
+if not _STRIPE_ENABLED:
+    print(
+        "INFO: Stripe not configured (STRIPE_SECRET_KEY / STRIPE_PRICE_ID missing). "
+        "Billing features disabled — all users get full access.",
+        file=sys.stderr,
+    )
+else:
+    import stripe as _stripe_mod
+
+    _stripe_mod.api_key = _STRIPE_SECRET_KEY
 
 # ---------------------------------------------------------------------------
 # User model for flask-login
@@ -179,9 +208,51 @@ class User(UserMixin):
         self.id = row["id"]
         self.email = row["email"]
         self.email_verified = bool(row["email_verified"])
+        # Stripe billing fields (graceful for old schemas)
+        try:
+            self.stripe_customer_id = row["stripe_customer_id"]
+        except (KeyError, IndexError):
+            self.stripe_customer_id = None
+        try:
+            self.subscription_status = row["subscription_status"] or "trialing"
+        except (KeyError, IndexError):
+            self.subscription_status = "trialing"
+        try:
+            self.trial_ends_at = row["trial_ends_at"]
+        except (KeyError, IndexError):
+            self.trial_ends_at = None
+        try:
+            self.subscription_ends_at = row["subscription_ends_at"]
+        except (KeyError, IndexError):
+            self.subscription_ends_at = None
+        try:
+            self.request_slug = row["request_slug"]
+        except (KeyError, IndexError):
+            self.request_slug = None
 
     def get_id(self):
         return str(self.id)
+
+    @property
+    def has_active_subscription(self) -> bool:
+        """True if user has an active paid subscription or is within trial."""
+        if self.subscription_status == "active":
+            return True
+        if self.subscription_status == "trialing" and self.trial_ends_at:
+            return self.trial_ends_at > datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        return False
+
+    @property
+    def trial_days_remaining(self) -> int:
+        """Days left in trial, or 0 if expired / not trialing."""
+        if self.subscription_status != "trialing" or not self.trial_ends_at:
+            return 0
+        try:
+            end = datetime.strptime(self.trial_ends_at[:19], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return 0
+        delta = (end - datetime.utcnow()).days
+        return max(delta, 0)
 
 
 @login_manager.user_loader
@@ -366,6 +437,12 @@ CHECK_EMAIL_HTML = (
     "📧 We sent a verification link to <strong>{{ email }}</strong>.<br><br>"
     "Click the link in the email to activate your account."
     "</div>"
+    "{% if info %}<div class='info'>{{ info }}</div>{% endif %}"
+    "<form method='post' action='/verify/resend' style='margin-top:16px'>"
+    "<input type='hidden' name='email' value='{{ email }}'>"
+    "<button class='btn' type='submit' style='background:transparent;border:1px solid var(--border);"
+    "color:var(--muted);font-size:13px;min-height:40px'>Resend verification email</button>"
+    "</form>"
     "<div class='link'>Wrong email? <a href='/signup'>Start over</a> &nbsp;·&nbsp; "
     "<a href='/login'>Sign in</a></div>"
     "</div></body></html>"
@@ -380,6 +457,11 @@ UNVERIFIED_HTML = (
     "📧 Please verify your email before accessing the dashboard.<br><br>"
     "Check your inbox for a verification link."
     "</div>"
+    "<form method='post' action='/verify/resend' style='margin-top:16px'>"
+    "<input type='hidden' name='email' value='{{ current_user.email }}'>"
+    "<button class='btn' type='submit' style='background:transparent;border:1px solid var(--border);"
+    "color:var(--muted);font-size:13px;min-height:40px'>Resend verification email</button>"
+    "</form>"
     "<div class='link'><a href='/logout'>Sign out</a></div>"
     "</div></body></html>"
 )
@@ -435,8 +517,8 @@ textarea{resize:vertical;min-height:80px;}
 _REQUEST_FORM_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>Request Service</title>" + _REQUEST_CSS + "</head><body><div class='card'>"
-    "<h1>🦞 Request Service</h1>"
+    "<title>{{ form_title|default('Request Service') }}</title>" + _REQUEST_CSS + "</head><body><div class='card'>"
+    "<h1>🦞 {{ form_title|default('Request Service') }}</h1>"
     "<div class='sub'>Fill out the form and we'll get back to you shortly.</div>"
     "{% if error %}<div class='err'>{{ error }}</div>{% endif %}"
     "<form method='post'>"
@@ -470,7 +552,7 @@ _REQUEST_FORM_HTML = (
     ") }}'>"
     # Honeypot: hidden from real users, bots fill it in
     "<div style='display:none' aria-hidden='true'><label>Website</label>"
-    "<input type='text' name='_hp_website' autocomplete='off' tabindex='-1'></div>"
+    "<input type='text' name='website' autocomplete='off' tabindex='-1'></div>"
     "<button class='btn' type='submit'>Submit Request</button>"
     "</form>"
     "</div></body></html>"
@@ -492,15 +574,30 @@ _REQUEST_SUCCESS_HTML = (
 )
 
 
-def _send_new_request_notification(lead: dict):
+def _send_new_request_notification(lead: dict, user_id: int = 1):
     """Fire-and-forget owner alert when a new public request comes in.
 
+    Looks up the owner from the users table. Checks notify_new_requests pref.
     Tries Resend first, then SMTP, then logs to stderr in dev mode.
     Never raises — notification failures must not break form submission.
     """
-    owner_email = os.environ.get("OWNER_NOTIFY_EMAIL") or os.environ.get("SMTP_USER", "").strip()
-    if not owner_email:
-        # No owner email configured — skip silently
+    try:
+        owner = get_user_by_id(user_id)
+    except Exception:
+        owner = None
+    if not owner:
+        return
+
+    # Respect notification preference
+    try:
+        if not owner["notify_new_requests"]:
+            return
+    except (KeyError, IndexError):
+        pass  # column missing on old schema — default to sending
+
+    # Determine recipient: user's own email, or OWNER_NOTIFY_EMAIL override
+    owner_email = os.environ.get("OWNER_NOTIFY_EMAIL") or owner["email"]
+    if not owner_email or owner_email == "cli@localhost":
         return
 
     app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
@@ -512,7 +609,7 @@ def _send_new_request_notification(lead: dict):
     pref_tw = lead.get("requested_time_window") or ""
     notes = lead.get("notes") or ""
 
-    subject = f"New LeadClaw request: {service} from {name}"
+    subject = f"New request from {name} — {service}"
     body_lines = [
         "New service request submitted via LeadClaw:",
         "",
@@ -581,6 +678,98 @@ def _send_new_request_notification(lead: dict):
         )
     except Exception as exc:
         print(f"[NOTIFY] Failed to send owner notification: {exc}", file=sys.stderr)
+
+
+def send_followup_digest(user_id: int) -> bool:
+    """Send a follow-up digest email if there are overdue leads.
+
+    Returns True if an email was sent, False otherwise.
+    Designed to be called from a cron/scheduler — safe to call multiple times per day.
+    """
+    overdue = get_overdue_followups(user_id)
+    if not overdue:
+        return False
+
+    owner = get_user_by_id(user_id)
+    if not owner:
+        return False
+    try:
+        if not owner["notify_new_requests"]:
+            return False
+    except (KeyError, IndexError):
+        pass
+
+    to_email = owner["email"]
+    if not to_email or to_email == "cli@localhost":
+        return False
+
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+    count = len(overdue)
+    subject = f"You have {count} lead{'s' if count != 1 else ''} to follow up on"
+
+    lines = ["These leads are due for follow-up:", ""]
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    for lead in overdue[:10]:
+        name = lead["name"] or "Unknown"
+        service = lead["service"] or ""
+        phone = lead["phone"] or "—"
+        fu_date = str(lead["follow_up_after"])[:10] if lead["follow_up_after"] else today
+        try:
+            days_overdue = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(fu_date, "%Y-%m-%d")).days
+        except (ValueError, TypeError):
+            days_overdue = 0
+        days_str = f"{days_overdue} day{'s' if days_overdue != 1 else ''} overdue" if days_overdue > 0 else "due today"
+        lines.append(f"  • {name} ({service}) — {phone} — {days_str}")
+    if count > 10:
+        lines.append(f"  …and {count - 10} more — check your dashboard")
+    lines += ["", f"Open dashboard: {app_url}/"]
+    body = "\n".join(lines)
+
+    try:
+        resend_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+        if resend_key:
+            import urllib.request as _ureq
+
+            payload = _json.dumps(
+                {"from": _notify_from_email(), "to": [to_email], "subject": subject, "text": body}
+            ).encode()
+            req = _ureq.Request(
+                "https://api.resend.com/emails",
+                data=payload,
+                method="POST",
+                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+            )
+            try:
+                _ureq.urlopen(req, timeout=8)
+                print(f"[DIGEST] Follow-up digest sent to {to_email}", file=sys.stderr)
+                return True
+            except Exception as exc:
+                print(f"[DIGEST] Resend failed: {exc}", file=sys.stderr)
+
+        smtp_host = os.environ.get("SMTP_HOST")
+        if smtp_host:
+            smtp_port = int(os.environ.get("SMTP_PORT", 587))
+            smtp_user = os.environ.get("SMTP_USER", "")
+            smtp_pass = os.environ.get("SMTP_PASS", "")
+            from_addr = _notify_from_email()
+            msg = MIMEText(body, "plain")
+            msg["Subject"] = subject
+            msg["From"] = from_addr
+            msg["To"] = to_email
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=8) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.login(smtp_user, smtp_pass)
+                srv.sendmail(from_addr, [to_email], msg.as_string())
+            print(f"[DIGEST] Follow-up digest sent via SMTP to {to_email}", file=sys.stderr)
+            return True
+
+        # Dev fallback
+        print(f"[DIGEST] {count} overdue leads for {to_email}:\n{body}", file=sys.stderr)
+        return True
+    except Exception as exc:
+        print(f"[DIGEST] Failed to send digest: {exc}", file=sys.stderr)
+        return False
 
 
 def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
@@ -660,22 +849,24 @@ def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
-@app.route("/request", methods=["GET", "POST"])
-def public_request():
-    """Public service request form. No auth required. Creates a lead on submit."""
+def _handle_request_form(user_id: int, form_title: str = "Request Service"):
+    """Shared handler for public request form (GET renders form, POST processes submission).
+
+    Used by both /request (legacy, user_id=1) and /request/<slug> (per-user).
+    """
     if request.method == "GET":
-        # Embed submission timestamp in form for min-time check
         form_ts = str(int(time.time()))
         return render_template_string(
             _REQUEST_FORM_HTML,
             services=_REQUEST_SERVICES,
             time_windows=_REQUEST_TIME_WINDOWS,
             form_ts=form_ts,
+            form_title=form_title,
         )
 
     # --- Anti-spam checks ---
     # 1. Honeypot: if the hidden field is filled, silently discard
-    if request.form.get("_hp_website", ""):
+    if request.form.get("website", ""):
         return render_template_string(_REQUEST_SUCCESS_HTML, name="there", avail_warning=None)
 
     # 2. Minimum time check
@@ -688,22 +879,12 @@ def public_request():
                 error="Please take a moment to fill out the form.",
                 services=_REQUEST_SERVICES,
                 time_windows=_REQUEST_TIME_WINDOWS,
+                form_title=form_title,
             )
     except (ValueError, TypeError):
         pass
 
-    # 3. Per-IP rate limit
-    client_ip = (
-        request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
-    )
-    if _is_throttled(client_ip):
-        return render_template_string(
-            _REQUEST_FORM_HTML,
-            error="Too many requests. Please try again later.",
-            services=_REQUEST_SERVICES,
-            time_windows=_REQUEST_TIME_WINDOWS,
-        ), 429
-
+    # 3. Strip all text inputs
     name = (request.form.get("name") or "").strip()
     phone = (request.form.get("phone") or "").strip()
     email = (request.form.get("email") or "").strip() or None
@@ -713,7 +894,25 @@ def public_request():
     requested_time_window = (request.form.get("requested_time_window") or "").strip() or None
     notes = (request.form.get("notes") or "").strip() or None
 
-    _MAX_PHONE = 20
+    # 4. Reject <script injection attempts
+    _all_text = " ".join(
+        v for v in (name, phone, email, service, service_address, requested_date, notes) if v
+    )
+    if "<script" in _all_text.lower():
+        return jsonify(error="Input too long."), 400
+
+    # 5. Hard length caps — reject before any further processing
+    _LENGTH_CAPS = {
+        "name": (name, 200),
+        "email": (email, 254),
+        "phone": (phone, 30),
+        "service": (service, 200),
+        "notes": (notes, 2000),
+        "requested_date": (requested_date, 30),
+    }
+    for _field, (_val, _max) in _LENGTH_CAPS.items():
+        if _val and len(_val) > _max:
+            return jsonify(error="Input too long."), 400
 
     errors = []
     if not name:
@@ -722,16 +921,16 @@ def public_request():
         errors.append(f"Name must be {MAX_NAME_LENGTH} characters or fewer.")
     if not phone:
         errors.append("Phone number is required.")
-    elif len(phone) > _MAX_PHONE:
-        errors.append(f"Phone number must be {_MAX_PHONE} characters or fewer.")
+    elif len(phone) > 30:
+        errors.append("Phone number must be 30 characters or fewer.")
     if not service or service not in _REQUEST_SERVICES:
         errors.append("Please select a valid service.")
     if not service_address:
         errors.append("Service address is required.")
     elif len(service_address) > MAX_FIELD_LENGTH:
         errors.append(f"Service address must be {MAX_FIELD_LENGTH} characters or fewer.")
-    if notes and len(notes) > MAX_FIELD_LENGTH:
-        errors.append(f"Notes must be {MAX_FIELD_LENGTH} characters or fewer.")
+    if notes and len(notes) > 2000:
+        errors.append("Notes must be 2000 characters or fewer.")
     if email and not _valid_email(email):
         errors.append("Enter a valid email address.")
     if requested_date and not _valid_date(requested_date):
@@ -747,6 +946,7 @@ def public_request():
                 error=" ".join(errors),
                 services=_REQUEST_SERVICES,
                 time_windows=_REQUEST_TIME_WINDOWS,
+                form_title=form_title,
                 name=name,
                 phone=phone,
                 email=email or "",
@@ -763,7 +963,7 @@ def public_request():
     avail_warning = None
     if requested_date:
         try:
-            avail = _avail.get_availability(user_id=1)
+            avail = _avail.get_availability(user_id=user_id)
             check = _avail.check_date(requested_date, avail)
             if not check["ok"]:
                 avail_warning = (
@@ -783,7 +983,7 @@ def public_request():
         requested_date=requested_date,
         requested_time_window=requested_time_window,
         service_address=service_address,
-        user_id=1,
+        user_id=user_id,
     )
 
     _send_new_request_notification(
@@ -795,13 +995,44 @@ def public_request():
             "requested_date": requested_date,
             "requested_time_window": requested_time_window,
             "notes": notes,
-        }
+        },
+        user_id=user_id,
     )
 
-    # Record submission for rate-limit tracking
-    _record_submission(client_ip)
-
     return render_template_string(_REQUEST_SUCCESS_HTML, name=name, avail_warning=avail_warning)
+
+
+# Deprecated: legacy /request route hardwired to user_id=1.
+# Will be removed once all users have per-user /request/<slug> URLs.
+@app.route("/request", methods=["GET", "POST"])
+@limiter.limit("10/hour", methods=["POST"])
+def public_request():
+    """Public service request form (legacy). Routes to user_id=1."""
+    return _handle_request_form(user_id=1)
+
+
+@app.route("/request/<slug>", methods=["GET", "POST"])
+@limiter.limit("10/hour", methods=["POST"])
+def public_request_slug(slug):
+    """Per-user public request form. Resolves user from slug."""
+    owner = get_user_by_slug(slug)
+    if not owner:
+        return jsonify({"error": "Not found"}), 404
+    # Don't expose form for unverified or expired-trial users
+    if not owner["email_verified"]:
+        return jsonify({"error": "Not found"}), 404
+    # Check subscription: if Stripe is enabled and user has no active sub/trial, hide form
+    if _STRIPE_ENABLED:
+        user_obj = User(owner)
+        if not user_obj.has_active_subscription:
+            return jsonify({"error": "Not found"}), 404
+    # Use business_name for form branding if available
+    try:
+        biz_name = owner["business_name"]
+    except (KeyError, IndexError):
+        biz_name = None
+    form_title = f"Request Service — {biz_name}" if biz_name else "Request Service"
+    return _handle_request_form(user_id=owner["id"], form_title=form_title)
 
 
 # ---------------------------------------------------------------------------
@@ -839,11 +1070,23 @@ def signup():
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     token = secrets.token_urlsafe(32)
     uid = create_user(email, pw_hash, token)
-    # Auto-verify on signup (email delivery blocked on shared IPs; re-enable later)
-    verify_user_email(uid)
-    row = get_user_by_id(uid)
-    login_user(User(row))
-    return redirect(url_for("dashboard"))
+    # Set 14-day trial period
+    trial_end = (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+    update_user_stripe(uid, subscription_status="trialing", trial_ends_at=trial_end)
+    # Generate request slug for per-user /request/<slug> URL
+    slug = secrets.token_urlsafe(8)
+    set_user_slug(uid, slug)
+
+    if REQUIRE_VERIFICATION:
+        # Send verification email — user must verify before accessing dashboard
+        _send_verification_email(email, token)
+        return render_template_string(CHECK_EMAIL_HTML, email=email)
+    else:
+        # Dev/testing mode: auto-verify and log in immediately
+        verify_user_email(uid)
+        row = get_user_by_id(uid)
+        login_user(User(row))
+        return redirect(url_for("dashboard"))
 
 
 @app.route("/verify/<token>")
@@ -855,11 +1098,39 @@ def verify_email(token):
             error="Invalid or expired verification link.",
         )
     verify_user_email(row["id"])
+    # Set trial if not already set (covers users who signed up before Stripe was added)
+    try:
+        if not row["trial_ends_at"]:
+            trial_end = (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+            update_user_stripe(row["id"], subscription_status="trialing", trial_ends_at=trial_end)
+    except (KeyError, IndexError):
+        pass
     # Re-fetch so email_verified is set
     updated = get_user_by_id(row["id"])
     user = User(updated)
     login_user(user)
     return redirect(url_for("dashboard"))
+
+
+_RESEND_MSG = "If an account with that email exists, we sent a new verification link."
+
+
+@app.route("/verify/resend", methods=["POST"])
+@limiter.limit("3/hour")
+def resend_verification():
+    """Resend verification email. Rate limited to 3/hour."""
+    email = (request.form.get("email") or "").strip().lower()
+    if not email:
+        return render_template_string(CHECK_EMAIL_HTML, email="", info=_RESEND_MSG)
+
+    row = get_user_by_email(email)
+    if row and not row["email_verified"]:
+        new_token = secrets.token_urlsafe(32)
+        update_verify_token(row["id"], new_token)
+        _send_verification_email(email, new_token)
+
+    # Always show generic message to prevent email enumeration
+    return render_template_string(CHECK_EMAIL_HTML, email=email, info=_RESEND_MSG)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -906,6 +1177,53 @@ def verified_required(f):
             return render_template_string(UNVERIFIED_HTML)
         return f(*args, **kwargs)
 
+    return decorated
+
+
+# ---------------------------------------------------------------------------
+# Subscription-required decorator (gated by _STRIPE_ENABLED)
+# ---------------------------------------------------------------------------
+
+_PAYWALL_HTML = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>Subscribe — LeadClaw</title>"
+    "<style>"
+    "body{font-family:system-ui;background:#0f1117;color:#e2e8f0;display:flex;"
+    "justify-content:center;align-items:center;min-height:100vh;margin:0}"
+    ".card{background:#1a1d2e;border-radius:12px;padding:32px;max-width:420px;"
+    "text-align:center;border:1px solid #2d3148}"
+    "h1{font-size:22px;margin:0 0 12px}"
+    "p{color:#94a3b8;line-height:1.5;margin:0 0 24px}"
+    "a.btn{display:inline-block;padding:12px 28px;background:#6366f1;color:#fff;"
+    "text-decoration:none;border-radius:8px;font-weight:600;font-size:15px}"
+    "a.btn:hover{background:#4f46e5}"
+    ".logout{margin-top:16px;display:block;color:#64748b;font-size:13px}"
+    "</style></head><body>"
+    "<div class='card'>"
+    "<h1>Your trial has ended</h1>"
+    "<p>Subscribe to keep using LeadClaw and manage your leads, requests, and pipeline.</p>"
+    "<a class='btn' href='/billing/checkout'>Subscribe Now</a>"
+    "<a class='logout' href='/logout'>Log out</a>"
+    "</div></body></html>"
+)
+
+
+def subscription_required(f):
+    """Wrap a view so it requires an active subscription or trial.
+
+    When Stripe is not configured (_STRIPE_ENABLED=False), this is a no-op
+    — all verified users get full access.
+    """
+    from functools import wraps
+
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not _STRIPE_ENABLED:
+            return f(*args, **kwargs)
+        if current_user.has_active_subscription:
+            return f(*args, **kwargs)
+        return render_template_string(_PAYWALL_HTML), 402
     return decorated
 
 
@@ -969,6 +1287,7 @@ def _lead_to_dict(row) -> dict:
         "service_address": _safe_col("service_address"),
         "scheduled_time_window": _safe_col("scheduled_time_window"),
         "request_seen_at": _safe_col("request_seen_at"),
+        "actual_amount": _safe_col("actual_amount"),
     }
 
 
@@ -1081,10 +1400,22 @@ def manifest():
             "name": "LeadClaw",
             "short_name": "LeadClaw",
             "start_url": "/",
+            "scope": "/",
             "display": "standalone",
             "background_color": "#0f1117",
             "theme_color": "#6366f1",
-            "icons": [],
+            "icons": [
+                {
+                    "src": "/static/icon-192.png",
+                    "sizes": "192x192",
+                    "type": "image/png",
+                },
+                {
+                    "src": "/static/icon-512.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                },
+            ],
         }
     )
 
@@ -1092,6 +1423,7 @@ def manifest():
 @app.route("/")
 @login_required
 @verified_required
+@subscription_required
 def dashboard():
     return _build_dashboard_html(current_user.email)
 
@@ -1099,6 +1431,7 @@ def dashboard():
 @app.route("/api/summary")
 @login_required
 @verified_required
+@subscription_required
 def route_api_summary():
     try:
         return jsonify(api_summary(current_user.id))
@@ -1110,6 +1443,7 @@ def route_api_summary():
 @app.route("/api/closed")
 @login_required
 @verified_required
+@subscription_required
 def route_api_closed():
     try:
         return jsonify(api_closed(current_user.id))
@@ -1121,6 +1455,7 @@ def route_api_closed():
 @app.route("/api/pilot")
 @login_required
 @verified_required
+@subscription_required
 def route_api_pilot():
     status = request.args.get("status") or None
     try:
@@ -1133,6 +1468,7 @@ def route_api_pilot():
 @app.route("/api/leads/<int:lead_id>")
 @login_required
 @verified_required
+@subscription_required
 def route_get_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if lead:
@@ -1148,6 +1484,7 @@ def route_get_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/draft-message", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_draft_message(lead_id):
     """Return a copy-ready message for a lead. Pure template, no AI."""
     from leadclaw.drafting import MSG_TYPES, draft_message
@@ -1171,6 +1508,7 @@ def route_draft_message(lead_id):
 @app.route("/api/leads", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_add_lead():
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()
@@ -1211,6 +1549,7 @@ def route_add_lead():
 @app.route("/api/leads/<int:lead_id>/edit", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_edit_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1218,21 +1557,28 @@ def route_edit_lead(lead_id):
 
     body = request.get_json(silent=True) or {}
     fields = {}
+    nullable_fields = {"phone", "email", "notes", "follow_up_after"}
     for field in ("name", "service", "phone", "email", "notes", "follow_up_after"):
-        val = body.get(field)
-        if val is not None:
-            val = str(val).strip() or None
-            if val is None:
-                continue
-            if field == "name" and len(val) > MAX_NAME_LENGTH:
-                return jsonify({"error": f"name max {MAX_NAME_LENGTH} chars"}), 400
-            if field not in ("name",) and len(val) > MAX_FIELD_LENGTH:
-                return jsonify({"error": f"{field} max {MAX_FIELD_LENGTH} chars"}), 400
-            if field == "email" and not _valid_email(val):
-                return jsonify({"error": "invalid email format"}), 400
-            if field == "follow_up_after" and not _valid_date(val):
-                return jsonify({"error": "follow_up_after must be YYYY-MM-DD"}), 400
-            fields[field] = val
+        if field not in body:
+            continue
+        raw = body[field]
+        val = str(raw).strip() if raw is not None else None
+        # Treat empty string as null
+        if val == "":
+            val = None
+        if val is None:
+            if field in nullable_fields:
+                fields[field] = None
+            continue
+        if field == "name" and len(val) > MAX_NAME_LENGTH:
+            return jsonify({"error": f"name max {MAX_NAME_LENGTH} chars"}), 400
+        if field not in ("name",) and len(val) > MAX_FIELD_LENGTH:
+            return jsonify({"error": f"{field} max {MAX_FIELD_LENGTH} chars"}), 400
+        if field == "email" and not _valid_email(val):
+            return jsonify({"error": "invalid email format"}), 400
+        if field == "follow_up_after" and not _valid_date(val):
+            return jsonify({"error": "follow_up_after must be YYYY-MM-DD"}), 400
+        fields[field] = val
     update_lead(lead_id, user_id=current_user.id, **fields)
     return jsonify({"ok": True})
 
@@ -1240,6 +1586,7 @@ def route_edit_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/quote", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_quote_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1258,6 +1605,7 @@ def route_quote_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/won", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_won_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1269,6 +1617,7 @@ def route_won_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/lost", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_lost_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1287,6 +1636,7 @@ def route_lost_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/delete", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_delete_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1303,6 +1653,7 @@ def route_delete_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/book", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_book_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1327,6 +1678,7 @@ def api_book_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/complete", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_complete_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1338,6 +1690,7 @@ def api_complete_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/invoice", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_invoice_lead(lead_id):
     from leadclaw.config import DEFAULT_INVOICE_REMINDER_DAYS
 
@@ -1365,6 +1718,7 @@ def api_invoice_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/paid", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_paid_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1376,13 +1730,22 @@ def api_paid_lead(lead_id):
             recurring = int(recurring)
         except (ValueError, TypeError):
             return jsonify({"error": "invalid recurring_days"}), 400
-    mark_paid(lead_id, recurring_days=recurring, user_id=current_user.id)
+    actual_amount = data.get("actual_amount")
+    if actual_amount is not None:
+        try:
+            actual_amount = float(actual_amount)
+            if actual_amount < 0:
+                return jsonify({"error": "actual_amount must be >= 0"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid actual_amount"}), 400
+    mark_paid(lead_id, recurring_days=recurring, actual_amount=actual_amount, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
 @app.route("/api/leads/<int:lead_id>/next-service", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_next_service(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1408,6 +1771,7 @@ def api_next_service(lead_id):
 @app.route("/api/availability", methods=["GET"])
 @login_required
 @verified_required
+@subscription_required
 def route_get_availability():
     """Return current availability settings for the logged-in user."""
     try:
@@ -1423,6 +1787,7 @@ def route_get_availability():
 @app.route("/api/availability", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_set_availability():
     """Save availability settings."""
     data = request.get_json(silent=True) or {}
@@ -1447,6 +1812,7 @@ def route_set_availability():
 @app.route("/api/availability/check")
 @login_required
 @verified_required
+@subscription_required
 def route_check_availability():
     """Check whether a date is available. ?date=YYYY-MM-DD"""
     date_str = (request.args.get("date") or "").strip()
@@ -1468,6 +1834,7 @@ _REQUEST_FILTER_VALUES = {"unbooked", "booked", "all"}
 @app.route("/api/requests")
 @login_required
 @verified_required
+@subscription_required
 def route_api_requests():
     """Return public request leads filtered by status group."""
     filter_val = (request.args.get("filter") or "unbooked").strip()
@@ -1484,6 +1851,7 @@ def route_api_requests():
 @app.route("/api/requests/<int:lead_id>/seen", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_mark_request_seen(lead_id):
     """Mark a single public request as seen by the owner."""
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
@@ -1496,6 +1864,7 @@ def route_mark_request_seen(lead_id):
 @app.route("/api/requests/seen-all", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_mark_all_requests_seen():
     """Mark all unseen public requests as seen."""
     count = mark_all_requests_seen(user_id=current_user.id)
@@ -1505,6 +1874,7 @@ def route_mark_all_requests_seen():
 @app.route("/api/reminders/dismiss", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_dismiss_reminder():
     data = request.get_json(silent=True) or {}
     lead_id = data.get("lead_id")
@@ -1527,9 +1897,39 @@ def api_dismiss_reminder():
 @app.route("/api/usage")
 @login_required
 @verified_required
+@subscription_required
 def route_api_usage():
     try:
         return jsonify(api_usage(current_user.id))
+    except Exception as e:
+        print(f"API error: {e}", file=sys.stderr)
+        return jsonify({"error": "An internal error occurred"}), 500
+
+
+@app.route("/api/reports")
+@login_required
+@verified_required
+@subscription_required
+def route_api_reports():
+    """Return reporting stats for the current user."""
+    try:
+        now = datetime.utcnow()
+        this_month_start = now.replace(day=1).strftime("%Y-%m-%d")
+        if now.month == 12:
+            next_month_start = now.replace(year=now.year + 1, month=1, day=1).strftime("%Y-%m-%d")
+        else:
+            next_month_start = now.replace(month=now.month + 1, day=1).strftime("%Y-%m-%d")
+        if now.month == 1:
+            last_month_start = now.replace(year=now.year - 1, month=12, day=1).strftime("%Y-%m-%d")
+        else:
+            last_month_start = now.replace(month=now.month - 1, day=1).strftime("%Y-%m-%d")
+
+        uid = current_user.id
+        return jsonify({
+            "this_month": get_report_stats(uid, this_month_start, next_month_start),
+            "last_month": get_report_stats(uid, last_month_start, this_month_start),
+            "all_time": get_report_stats_all_time(uid),
+        })
     except Exception as e:
         print(f"API error: {e}", file=sys.stderr)
         return jsonify({"error": "An internal error occurred"}), 500
@@ -1548,6 +1948,7 @@ def _get_pilot_candidate(cid: int):
 @app.route("/api/pilot/<int:cid>/save-draft", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_save_draft(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1563,6 +1964,7 @@ def route_pilot_save_draft(cid):
 @app.route("/api/pilot/<int:cid>/save-and-approve", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_save_and_approve(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1579,6 +1981,7 @@ def route_pilot_save_and_approve(cid):
 @app.route("/api/pilot/<int:cid>/approve", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_approve(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1592,6 +1995,7 @@ def route_pilot_approve(cid):
 @app.route("/api/pilot/<int:cid>/mark-sent", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_mark_sent(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1603,6 +2007,7 @@ def route_pilot_mark_sent(cid):
 @app.route("/api/pilot/<int:cid>/log-reply", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_log_reply(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1628,6 +2033,7 @@ def route_pilot_log_reply(cid):
 @app.route("/api/pilot/<int:cid>/convert", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_convert(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1639,6 +2045,7 @@ def route_pilot_convert(cid):
 @app.route("/api/pilot/<int:cid>/pass", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_pass(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1648,8 +2055,239 @@ def route_pilot_pass(cid):
 
 
 # ---------------------------------------------------------------------------
+# Billing routes (Stripe)
+# ---------------------------------------------------------------------------
+
+
+@app.route("/billing/checkout", methods=["GET", "POST"])
+@login_required
+@verified_required
+def billing_checkout():
+    """Create a Stripe Checkout Session and redirect to Stripe."""
+    if not _STRIPE_ENABLED:
+        return redirect(url_for("dashboard"))
+
+    import stripe
+
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+
+    # Create or reuse Stripe customer
+    customer_id = current_user.stripe_customer_id
+    if not customer_id:
+        customer = stripe.Customer.create(email=current_user.email)
+        customer_id = customer.id
+        update_user_stripe(current_user.id, stripe_customer_id=customer_id)
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        payment_method_types=["card"],
+        line_items=[{"price": _STRIPE_PRICE_ID, "quantity": 1}],
+        mode="subscription",
+        success_url=app_url + "/billing/success?session_id={CHECKOUT_SESSION_ID}",
+        cancel_url=app_url + "/billing/cancel",
+    )
+    return redirect(session.url, code=303)
+
+
+@app.route("/billing/success")
+@login_required
+@verified_required
+def billing_success():
+    """Post-checkout landing page. Stripe webhook handles the actual activation."""
+    _SUCCESS_HTML = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Subscribed — LeadClaw</title>"
+        "<style>"
+        "body{font-family:system-ui;background:#0f1117;color:#e2e8f0;display:flex;"
+        "justify-content:center;align-items:center;min-height:100vh;margin:0}"
+        ".card{background:#1a1d2e;border-radius:12px;padding:32px;max-width:420px;"
+        "text-align:center;border:1px solid #2d3148}"
+        "h1{font-size:22px;margin:0 0 12px;color:#22c55e}"
+        "p{color:#94a3b8;line-height:1.5;margin:0 0 24px}"
+        "a.btn{display:inline-block;padding:12px 28px;background:#6366f1;color:#fff;"
+        "text-decoration:none;border-radius:8px;font-weight:600}"
+        "</style></head><body>"
+        "<div class='card'>"
+        "<h1>You're subscribed!</h1>"
+        "<p>Thanks for subscribing to LeadClaw. Your account is now active.</p>"
+        "<a class='btn' href='/'>Go to Dashboard</a>"
+        "</div></body></html>"
+    )
+    return render_template_string(_SUCCESS_HTML)
+
+
+@app.route("/billing/cancel")
+@login_required
+@verified_required
+def billing_cancel():
+    """User cancelled Stripe checkout. Redirect back to dashboard."""
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/billing/portal", methods=["GET", "POST"])
+@login_required
+@verified_required
+def billing_portal():
+    """Redirect to Stripe Customer Portal for subscription management."""
+    if not _STRIPE_ENABLED:
+        return redirect(url_for("dashboard"))
+
+    import stripe
+
+    customer_id = current_user.stripe_customer_id
+    if not customer_id:
+        return redirect(url_for("billing_checkout"))
+
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+    portal_session = stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=app_url + "/",
+    )
+    return redirect(portal_session.url, code=303)
+
+
+@app.route("/stripe/webhook", methods=["POST"])
+def stripe_webhook():
+    """Handle Stripe webhook events. No auth — verified by signature."""
+    if not _STRIPE_ENABLED:
+        return jsonify({"error": "Stripe not configured"}), 400
+
+    import stripe
+
+    payload = request.get_data(as_text=False)
+    sig_header = request.headers.get("Stripe-Signature", "")
+
+    if _STRIPE_WEBHOOK_SECRET:
+        try:
+            event = stripe.Webhook.construct_event(payload, sig_header, _STRIPE_WEBHOOK_SECRET)
+        except ValueError:
+            return jsonify({"error": "Invalid payload"}), 400
+        except stripe.error.SignatureVerificationError:
+            return jsonify({"error": "Invalid signature"}), 400
+    else:
+        # No webhook secret configured — parse raw (dev only)
+        try:
+            event = stripe.Event.construct_from(_json.loads(payload), stripe.api_key)
+        except Exception:
+            return jsonify({"error": "Invalid payload"}), 400
+
+    event_type = event["type"]
+    data_obj = event["data"]["object"]
+
+    if event_type == "checkout.session.completed":
+        customer_id = data_obj.get("customer")
+        if customer_id:
+            _activate_subscription(customer_id)
+
+    elif event_type == "customer.subscription.updated":
+        customer_id = data_obj.get("customer")
+        status = data_obj.get("status")
+        if customer_id and status:
+            _update_subscription_status(customer_id, status, data_obj)
+
+    elif event_type == "customer.subscription.deleted":
+        customer_id = data_obj.get("customer")
+        if customer_id:
+            _cancel_subscription(customer_id)
+
+    elif event_type == "invoice.payment_failed":
+        customer_id = data_obj.get("customer")
+        if customer_id:
+            _update_subscription_status(customer_id, "past_due")
+
+    return jsonify({"ok": True}), 200
+
+
+def _activate_subscription(stripe_customer_id: str):
+    """Mark the user with this Stripe customer as active."""
+    from leadclaw.db import get_conn
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET subscription_status = 'active' WHERE stripe_customer_id = ?",
+            (stripe_customer_id,),
+        )
+
+
+def _update_subscription_status(stripe_customer_id: str, status: str, sub_obj=None):
+    """Update subscription status from a Stripe event."""
+    from leadclaw.db import get_conn
+
+    fields = {"subscription_status": status}
+    if sub_obj:
+        period_end = sub_obj.get("current_period_end")
+        if period_end:
+            from datetime import datetime as _dt
+
+            fields["subscription_ends_at"] = _dt.utcfromtimestamp(period_end).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    vals = list(fields.values()) + [stripe_customer_id]
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE users SET {set_clause} WHERE stripe_customer_id = ?", vals
+        )
+
+
+def _cancel_subscription(stripe_customer_id: str):
+    """Mark subscription as canceled."""
+    from leadclaw.db import get_conn
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET subscription_status = 'canceled' WHERE stripe_customer_id = ?",
+            (stripe_customer_id,),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Billing status API (for dashboard trial banner)
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/billing")
+@login_required
+@verified_required
+def route_api_billing():
+    """Return billing status and request URL for the current user."""
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+    slug = current_user.request_slug
+    request_url = f"{app_url}/request/{slug}" if slug else None
+    return jsonify({
+        "stripe_enabled": _STRIPE_ENABLED,
+        "subscription_status": current_user.subscription_status,
+        "trial_days_remaining": current_user.trial_days_remaining,
+        "has_active_subscription": current_user.has_active_subscription,
+        "request_url": request_url,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+
+def _run_send_digests():
+    """Send follow-up digest emails for all eligible users."""
+    from leadclaw.db import get_conn
+
+    with get_conn() as conn:
+        users = conn.execute(
+            "SELECT id, email FROM users WHERE email != 'cli@localhost'"
+        ).fetchall()
+
+    processed = 0
+    sent = 0
+    for user_row in users:
+        processed += 1
+        if send_followup_digest(user_row["id"]):
+            sent += 1
+
+    print(f"[DIGEST] Processed {processed} users, sent {sent} digest emails.", file=sys.stderr)
+    return sent
 
 
 def main():
@@ -1659,7 +2297,16 @@ def main():
     parser = argparse.ArgumentParser(prog="leadclaw-web", description="LeadClaw web dashboard")
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 7432)))
+    parser.add_argument(
+        "--send-digests",
+        action="store_true",
+        help="Send follow-up digest emails and exit (designed for cron)",
+    )
     args = parser.parse_args()
+
+    if args.send_digests:
+        _run_send_digests()
+        return
 
     if args.host == "0.0.0.0":
         print("WARNING: binding to 0.0.0.0 — ensure this is behind a reverse proxy in production.")

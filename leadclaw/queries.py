@@ -213,7 +213,7 @@ def get_closed_summary(user_id: Optional[int] = None):
             SELECT
                 CASE WHEN status = 'won' THEN 'paid' ELSE status END as status,
                 COUNT(*) as count,
-                COALESCE(SUM(quote_amount), 0) as total
+                COALESCE(SUM(COALESCE(actual_amount, quote_amount)), 0) as total
             FROM leads WHERE status IN ('won', 'lost', 'paid') {uid_clause}
             GROUP BY CASE WHEN status = 'won' THEN 'paid' ELSE status END
             """,
@@ -253,6 +253,90 @@ def get_closed_leads(user_id: Optional[int] = None):
                 """
             ).fetchall()
     return rows
+
+
+def get_report_stats(user_id: int, start_date: str, end_date: str) -> dict:
+    """Return reporting stats for a date range scoped to a user.
+
+    Returns: {jobs_completed, revenue_closed, leads_created, conversion_rate}
+    """
+    with get_conn() as conn:
+        jobs = conn.execute(
+            """
+            SELECT COUNT(*) as cnt,
+                   COALESCE(SUM(COALESCE(actual_amount, quote_amount)), 0) as revenue
+            FROM leads
+            WHERE user_id = ?
+              AND status IN ('paid', 'won', 'completed')
+              AND created_at >= ? AND created_at < ?
+            """,
+            (user_id, start_date, end_date),
+        ).fetchone()
+        total = conn.execute(
+            """
+            SELECT COUNT(*) as cnt FROM leads
+            WHERE user_id = ? AND created_at >= ? AND created_at < ?
+            """,
+            (user_id, start_date, end_date),
+        ).fetchone()
+    jobs_completed = jobs["cnt"]
+    revenue = jobs["revenue"]
+    leads_created = total["cnt"]
+    conversion_rate = round(jobs_completed / leads_created * 100, 1) if leads_created > 0 else 0.0
+    return {
+        "jobs_completed": jobs_completed,
+        "revenue_closed": round(revenue, 2),
+        "leads_created": leads_created,
+        "conversion_rate": conversion_rate,
+    }
+
+
+def get_report_stats_all_time(user_id: int) -> dict:
+    """Return all-time reporting stats for a user, including average deal size."""
+    with get_conn() as conn:
+        jobs = conn.execute(
+            """
+            SELECT COUNT(*) as cnt,
+                   COALESCE(SUM(COALESCE(actual_amount, quote_amount)), 0) as revenue
+            FROM leads
+            WHERE user_id = ? AND status IN ('paid', 'won', 'completed')
+            """,
+            (user_id,),
+        ).fetchone()
+        total = conn.execute(
+            "SELECT COUNT(*) as cnt FROM leads WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    jobs_completed = jobs["cnt"]
+    revenue = jobs["revenue"]
+    leads_created = total["cnt"]
+    conversion_rate = round(jobs_completed / leads_created * 100, 1) if leads_created > 0 else 0.0
+    average_deal_size = round(revenue / jobs_completed, 2) if jobs_completed > 0 else 0.0
+    return {
+        "jobs_completed": jobs_completed,
+        "revenue_closed": round(revenue, 2),
+        "leads_created": leads_created,
+        "conversion_rate": conversion_rate,
+        "average_deal_size": average_deal_size,
+    }
+
+
+def get_overdue_followups(user_id: int) -> list:
+    """Return leads with overdue follow_up_after for a specific user.
+
+    Excludes leads with status in (paid, completed, lost, won).
+    """
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT * FROM leads
+            WHERE user_id = ?
+              AND follow_up_after <= date('now')
+              AND status NOT IN ('paid', 'completed', 'lost', 'won')
+            ORDER BY follow_up_after ASC
+            """,
+            (user_id,),
+        ).fetchall()
 
 
 # ---------------------------------------------------------------------------
@@ -495,9 +579,12 @@ def mark_lost(
 def import_leads_from_rows(rows: list) -> dict:
     """
     Bulk-insert leads from a list of dicts (pre-validated CSV rows).
-    Supports: name, service, phone, email, notes, followup_days, quote_amount.
+    Supports: name, service, phone, email, notes, followup_days, quote_amount,
+    actual_amount, follow_up_after, lost_reason, status.
     Returns {imported, skipped, errors} summary.
     """
+    from leadclaw.config import LOST_REASONS
+
     imported = 0
     skipped = 0
     errors = []
@@ -527,12 +614,46 @@ def import_leads_from_rows(rows: list) -> dict:
                     quote_amount = None
             except (ValueError, TypeError):
                 pass  # ignore unparseable quote amounts
+        actual_amount = None
+        raw_actual = (row.get("actual_amount") or "").strip()
+        if raw_actual:
+            try:
+                actual_amount = float(raw_actual)
+                if actual_amount < 0:
+                    actual_amount = None
+            except (ValueError, TypeError):
+                pass
+        follow_up_after = (row.get("follow_up_after") or "").strip() or None
+        if follow_up_after:
+            # Validate YYYY-MM-DD format (accept datetime strings, take date part)
+            follow_up_after = follow_up_after[:10]
+            try:
+                datetime.strptime(follow_up_after, "%Y-%m-%d")
+            except ValueError:
+                follow_up_after = None
+        lost_reason = (row.get("lost_reason") or "").strip() or None
+        if lost_reason and lost_reason not in LOST_REASONS:
+            lost_reason = None
+        status = (row.get("status") or "").strip() or None
         try:
             lead_id, _ = add_lead(
                 name, service, phone=phone, email=email, notes=notes, followup_days=followup_days
             )
             if quote_amount is not None:
                 update_quote(lead_id, quote_amount, followup_days=followup_days)
+            if actual_amount is not None:
+                mark_paid(lead_id, actual_amount=actual_amount)
+            elif status == "paid":
+                mark_paid(lead_id)
+            elif status == "won":
+                mark_won(lead_id)
+            elif status == "completed":
+                mark_completed(lead_id)
+            elif status == "lost" and lost_reason:
+                mark_lost(lead_id, lost_reason)
+            # Apply follow_up_after override (after status changes which may reset it)
+            if follow_up_after:
+                update_lead(lead_id, follow_up_after=follow_up_after)
             imported += 1
         except Exception as e:  # noqa: BLE001
             errors.append(f"Row {i + 1} ({name}): {e}")
@@ -668,6 +789,7 @@ def mark_invoice_sent(
 def mark_paid(
     lead_id: int,
     recurring_days: Optional[int] = None,
+    actual_amount: Optional[float] = None,
     user_id: Optional[int] = None,
 ):
     """Mark a lead as paid. Optionally schedule a recurring service reminder.
@@ -703,19 +825,22 @@ def mark_paid(
                 f" service_reminder_at = date('now', '+{days} days'),"
             )
 
+        amount_clause = "actual_amount = ?," if actual_amount is not None else ""
+        amount_params = (actual_amount,) if actual_amount is not None else ()
         conn.execute(
             f"""
             UPDATE leads
             SET status = 'paid',
                 paid_at = datetime('now'),
                 invoice_reminder_at = NULL,
+                {amount_clause}
                 {svc_fields}
                 last_contact_at = datetime('now'),
                 follow_up_after = NULL,
                 review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
             {where}
             """,
-            params_base,
+            amount_params + params_base,
         )
         log_event(conn, "lead_paid", user_id=user_id, lead_id=lead_id)
 

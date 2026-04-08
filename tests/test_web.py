@@ -650,20 +650,30 @@ def test_http_pilot_not_found(auth_client):
 
 
 def test_signup_creates_user(client):
-    r = client.post(
-        "/signup",
-        data={
-            "email": "new@example.com",
-            "password": "securepass123",
-            "confirm": "securepass123",
-        },
-        follow_redirects=False,
-    )
-    # Auto-verify active (email delivery bypassed for pilot phase) — redirects to dashboard
-    assert r.status_code == 302
-    row = db.get_user_by_email("new@example.com")
-    assert row is not None
-    assert row["email_verified"] == 1
+    import leadclaw.config as cfg
+    import leadclaw.web as web_mod
+
+    original = cfg.REQUIRE_VERIFICATION
+    cfg.REQUIRE_VERIFICATION = False
+    web_mod.REQUIRE_VERIFICATION = False
+    try:
+        r = client.post(
+            "/signup",
+            data={
+                "email": "new@example.com",
+                "password": "securepass123",
+                "confirm": "securepass123",
+            },
+            follow_redirects=False,
+        )
+        # Auto-verify when REQUIRE_VERIFICATION=False — redirects to dashboard
+        assert r.status_code == 302
+        row = db.get_user_by_email("new@example.com")
+        assert row is not None
+        assert row["email_verified"] == 1
+    finally:
+        cfg.REQUIRE_VERIFICATION = original
+        web_mod.REQUIRE_VERIFICATION = original
 
 
 def test_signup_password_mismatch(client):
@@ -759,11 +769,59 @@ def test_logout_redirects(auth_client):
 
 
 # ---------------------------------------------------------------------------
+# PWA manifest and icon tests
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_returns_valid_json_with_icons(client):
+    """GET /manifest.json returns 200 with both icon entries."""
+    r = client.get("/manifest.json")
+    assert r.status_code == 200
+    data = json.loads(r.data)
+    assert data["name"] == "LeadClaw"
+    assert data["short_name"] == "LeadClaw"
+    assert data["start_url"] == "/"
+    assert data["scope"] == "/"
+    assert data["display"] == "standalone"
+    assert data["background_color"] == "#0f1117"
+    assert data["theme_color"] == "#6366f1"
+    icons = data["icons"]
+    assert len(icons) == 2
+    srcs = {ic["src"] for ic in icons}
+    assert "/static/icon-192.png" in srcs
+    assert "/static/icon-512.png" in srcs
+    for ic in icons:
+        assert ic["type"] == "image/png"
+        assert "sizes" in ic
+
+
+def test_icon_192_served(client):
+    """GET /static/icon-192.png returns 200 with image/png content type."""
+    r = client.get("/static/icon-192.png")
+    assert r.status_code == 200
+    assert r.content_type == "image/png"
+
+
+def test_icon_512_served(client):
+    """GET /static/icon-512.png returns 200 with image/png content type."""
+    r = client.get("/static/icon-512.png")
+    assert r.status_code == 200
+    assert r.content_type == "image/png"
+
+
+# ---------------------------------------------------------------------------
 # Public service request form
 # ---------------------------------------------------------------------------
 
 
 class TestPublicRequest:
+    @pytest.fixture(autouse=True)
+    def reset_limiter(self):
+        from leadclaw.web import limiter
+
+        limiter.reset()
+        yield
+
     _VALID = {
         "name": "Jane Smith",
         "phone": "512-555-0199",
@@ -857,16 +915,16 @@ class TestPublicRequest:
 
 
 class TestPublicRequestAntiSpam:
-    """Tests for honeypot, min-time, and rate-limit protections on /request."""
+    """Tests for honeypot, min-time, rate-limit, length caps, and sanitization on /request."""
 
     @pytest.fixture(autouse=True)
-    def clear_throttle(self):
-        """Reset rate-limit state before/after each test to prevent cross-test pollution."""
-        from leadclaw.web import _REQUEST_THROTTLE
+    def clear_limiter(self):
+        """Reset flask-limiter state before each test to prevent cross-test pollution."""
+        from leadclaw.web import limiter
 
-        _REQUEST_THROTTLE.clear()
+        limiter.reset()
         yield
-        _REQUEST_THROTTLE.clear()
+        limiter.reset()
 
     _VALID = {
         "name": "Spam Test User",
@@ -879,11 +937,9 @@ class TestPublicRequestAntiSpam:
         """If honeypot field is filled, silently return success but don't save lead."""
         import sqlite3
 
-        data = {**self._VALID, "_hp_website": "http://spam.example.com"}
+        data = {**self._VALID, "website": "http://spam.example.com"}
         r = client.post("/request", data=data, follow_redirects=True)
-        # Should silently "succeed" (no error to tip off bots)
         assert r.status_code == 200
-        # No lead should be saved
         conn = sqlite3.connect(os.environ["LEADCLAW_DB"])
         row = conn.execute("SELECT * FROM leads WHERE name = ?", ("Spam Test User",)).fetchone()
         conn.close()
@@ -891,16 +947,17 @@ class TestPublicRequestAntiSpam:
 
     def test_honeypot_empty_allows_submission(self, client):
         """Normal submission with no honeypot field succeeds."""
-        data = {**self._VALID, "_hp_website": ""}
+        data = {**self._VALID, "website": ""}
         r = client.post("/request", data=data, follow_redirects=True)
         assert r.status_code == 200
         assert b"Request Received" in r.data
 
     def test_form_includes_honeypot_field(self, client):
-        """GET /request should include the hidden honeypot input."""
+        """GET /request should include the hidden honeypot input with display:none."""
         r = client.get("/request")
         assert r.status_code == 200
-        assert b"_hp_website" in r.data
+        assert b"name='website'" in r.data
+        assert b"display:none" in r.data
 
     def test_form_includes_timestamp_field(self, client):
         """GET /request should include the hidden timestamp field."""
@@ -913,7 +970,6 @@ class TestPublicRequestAntiSpam:
 
         data = {**self._VALID, "_form_ts": str(int(time.time()))}
         r = client.post("/request", data=data)
-        # Should return an error (422 or re-render form with error message)
         assert r.status_code in (200, 422)
         assert b"Please take a moment" in r.data
 
@@ -928,43 +984,85 @@ class TestPublicRequestAntiSpam:
 
     def test_missing_timestamp_does_not_block(self, client):
         """Submissions with no _form_ts should pass (don't break old behavior)."""
-        data = {**self._VALID}  # no _form_ts key at all
+        data = {**self._VALID}
         r = client.post("/request", data=data, follow_redirects=True)
         assert r.status_code == 200
         assert b"Request Received" in r.data
 
     def test_rate_limit_blocks_after_threshold(self, client):
-        """Same IP submitting more than the limit in one window gets a 429."""
+        """11th POST from same IP within one hour gets a 429 with JSON error."""
         import time
 
-        from leadclaw.web import _REQUEST_THROTTLE, _REQUEST_THROTTLE_LIMIT
+        from leadclaw.web import limiter
 
-        # Clear any existing throttle state for this IP
-        _REQUEST_THROTTLE.clear()
+        limiter.reset()
+        old_ts = str(int(time.time()) - 10)
 
-        old_ts = str(int(time.time()) - 10)  # pass min-time check
-
-        # Submit up to the limit
-        for _ in range(_REQUEST_THROTTLE_LIMIT):
-            data = {**self._VALID, "_form_ts": old_ts}
+        for i in range(10):
+            data = {**self._VALID, "name": f"RateLimitUser{i}", "_form_ts": old_ts}
             r = client.post("/request", data=data, follow_redirects=True)
             assert r.status_code == 200
 
-        # Next submission should be throttled
-        data = {**self._VALID, "_form_ts": old_ts}
+        # 11th should be rate-limited
+        data = {**self._VALID, "name": "RateLimitUser10", "_form_ts": old_ts}
         r = client.post("/request", data=data)
         assert r.status_code == 429
+        body = json.loads(r.data)
+        assert "Too many requests" in body["error"]
 
     def test_rate_limit_does_not_block_under_threshold(self, client):
         """Submissions under the rate limit should always succeed."""
         import time
 
-        from leadclaw.web import _REQUEST_THROTTLE, _REQUEST_THROTTLE_LIMIT
+        from leadclaw.web import limiter
 
-        _REQUEST_THROTTLE.clear()
-
+        limiter.reset()
         old_ts = str(int(time.time()) - 10)
-        for i in range(_REQUEST_THROTTLE_LIMIT - 1):
+        for i in range(9):
             data = {**self._VALID, "name": f"User{i}", "_form_ts": old_ts}
             r = client.post("/request", data=data, follow_redirects=True)
             assert r.status_code == 200
+
+    def test_length_cap_rejects_long_name(self, client):
+        """POST with name exceeding 200 chars returns 400 JSON."""
+        data = {**self._VALID, "name": "A" * 201}
+        r = client.post("/request", data=data)
+        assert r.status_code == 400
+        body = json.loads(r.data)
+        assert body["error"] == "Input too long."
+
+    def test_length_cap_rejects_long_notes(self, client):
+        """POST with notes exceeding 2000 chars returns 400 JSON."""
+        data = {**self._VALID, "notes": "x" * 2001}
+        r = client.post("/request", data=data)
+        assert r.status_code == 400
+        body = json.loads(r.data)
+        assert body["error"] == "Input too long."
+
+    def test_length_cap_rejects_long_email(self, client):
+        """POST with email exceeding 254 chars returns 400 JSON."""
+        data = {**self._VALID, "email": "a" * 246 + "@test.com"}
+        r = client.post("/request", data=data)
+        assert r.status_code == 400
+        body = json.loads(r.data)
+        assert body["error"] == "Input too long."
+
+    def test_length_cap_rejects_long_phone(self, client):
+        """POST with phone exceeding 30 chars returns 400 JSON."""
+        data = {**self._VALID, "phone": "1" * 31}
+        r = client.post("/request", data=data)
+        assert r.status_code == 400
+        body = json.loads(r.data)
+        assert body["error"] == "Input too long."
+
+    def test_script_tag_rejected(self, client):
+        """POST with <script in any field returns 400."""
+        data = {**self._VALID, "name": '<script>alert("xss")</script>'}
+        r = client.post("/request", data=data)
+        assert r.status_code == 400
+
+    def test_script_tag_case_insensitive(self, client):
+        """<SCRIPT and <Script variants are also rejected."""
+        data = {**self._VALID, "notes": "<SCRIPT>alert(1)</SCRIPT>"}
+        r = client.post("/request", data=data)
+        assert r.status_code == 400
