@@ -222,6 +222,20 @@ def init_db():
             if "duplicate column" not in str(e).lower():
                 raise
 
+        # --- Column migrations: Stripe billing fields on users ---
+        _stripe_user_cols = [
+            "stripe_customer_id TEXT",
+            "subscription_status TEXT NOT NULL DEFAULT 'trialing'",
+            "trial_ends_at TEXT",
+            "subscription_ends_at TEXT",
+        ]
+        for col_def in _stripe_user_cols:
+            try:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col_def}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+
         # Ensure the default CLI user (id=1) exists so FK DEFAULT 1 is always valid
         conn.execute(
             """
@@ -282,6 +296,21 @@ def verify_user_email(user_id: int):
             "UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?",
             (user_id,),
         )
+
+
+def update_user_stripe(user_id: int, **fields):
+    """Update Stripe-related fields on a user row.
+
+    Valid keys: stripe_customer_id, subscription_status, trial_ends_at, subscription_ends_at.
+    """
+    _allowed = {"stripe_customer_id", "subscription_status", "trial_ends_at", "subscription_ends_at"}
+    updates = {k: v for k, v in fields.items() if k in _allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    vals = list(updates.values()) + [user_id]
+    with get_conn() as conn:
+        conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", vals)
 
 
 if __name__ == "__main__":

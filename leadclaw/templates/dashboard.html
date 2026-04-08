@@ -145,6 +145,11 @@
   .usage-table th{text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);border-bottom:1px solid var(--border);}
   .usage-table td{padding:10px;border-bottom:1px solid var(--border);}
   .usage-table tr:last-child td{border-bottom:none;}
+  .trial-banner{padding:10px 16px;background:#1e293b;border-bottom:1px solid #334155;
+                 display:none;align-items:center;gap:10px;font-size:13px;color:#f59e0b;}
+  .trial-banner a{color:#6366f1;font-weight:600;text-decoration:none;}
+  .trial-banner a:hover{text-decoration:underline;}
+  .trial-banner .trial-cta{margin-left:auto;white-space:nowrap;}
   .action-bar{display:flex;gap:6px;margin-bottom:8px;}
   .action-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;
               min-height:44px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);
@@ -192,6 +197,10 @@
     <a href="/logout" style="font-size:11px;color:var(--muted);text-decoration:none;padding:4px;">Out</a>
   </div>
 </header>
+<div class="trial-banner" id="trial-banner">
+  <span id="trial-banner-text"></span>
+  <span class="trial-cta"><a href="/billing/checkout">Subscribe</a> · <a href="/billing/portal">Manage</a></span>
+</div>
 <div class="stats-bar" id="stats-bar"></div>
 <nav class="bottom-nav">
   <button class="nav-item active" id="nav-today" onclick="switchTab('today')">
@@ -1482,9 +1491,31 @@ async function submitBookRequest(){
   load(); // refresh unseen count
 }
 
+// Billing / trial banner
+async function loadBilling(){
+  try{
+    const b=await fetch('/api/billing').then(r=>r.json());
+    if(!b.stripe_enabled)return;
+    const banner=document.getElementById('trial-banner');
+    const txt=document.getElementById('trial-banner-text');
+    if(b.subscription_status==='trialing'){
+      txt.textContent='Trial: '+b.trial_days_remaining+' day'+(b.trial_days_remaining===1?'':'s')+' remaining';
+      banner.style.display='flex';
+    }else if(b.subscription_status==='active'){
+      banner.style.display='none';
+    }else if(b.subscription_status==='past_due'){
+      txt.textContent='Payment past due — update your payment method to avoid service interruption.';
+      banner.style.display='flex';
+    }else if(b.subscription_status==='canceled'){
+      txt.textContent='Your subscription has been canceled.';
+      banner.style.display='flex';
+    }
+  }catch(e){}
+}
 // Init
 switchTab('today');
 load();
+loadBilling();
 
 // Setup checklist — persist in localStorage
 (function(){

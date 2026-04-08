@@ -20,6 +20,11 @@ Environment variables:
     HOST                 - Bind host (default: 127.0.0.1)
     APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
 
+Stripe billing env vars (all optional — billing disabled if missing):
+    STRIPE_SECRET_KEY    - Stripe secret key (sk_live_... or sk_test_...)
+    STRIPE_PRICE_ID      - Stripe Price ID for the subscription plan
+    STRIPE_WEBHOOK_SECRET - Webhook endpoint signing secret (whsec_...)
+
 Email / notification env vars (swap these when domain is ready):
     RESEND_API_KEY       - Resend API key (preferred; takes priority over SMTP)
     NOTIFY_FROM_EMAIL    - Sender address, e.g. 'LeadClaw <hello@yourdomain.com>'
@@ -38,7 +43,7 @@ import secrets
 import smtplib
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
 import bcrypt
@@ -75,6 +80,7 @@ from leadclaw.db import (
     get_user_by_id,
     get_user_by_verify_token,
     init_db,
+    update_user_stripe,
     verify_user_email,
 )
 from leadclaw.queries import (
@@ -164,6 +170,26 @@ with app.app_context():
     init_db()
 
 # ---------------------------------------------------------------------------
+# Stripe billing configuration
+# ---------------------------------------------------------------------------
+
+_STRIPE_SECRET_KEY = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+_STRIPE_PRICE_ID = (os.environ.get("STRIPE_PRICE_ID") or "").strip()
+_STRIPE_WEBHOOK_SECRET = (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip()
+_STRIPE_ENABLED = bool(_STRIPE_SECRET_KEY and _STRIPE_PRICE_ID)
+
+if not _STRIPE_ENABLED:
+    print(
+        "INFO: Stripe not configured (STRIPE_SECRET_KEY / STRIPE_PRICE_ID missing). "
+        "Billing features disabled — all users get full access.",
+        file=sys.stderr,
+    )
+else:
+    import stripe as _stripe_mod
+
+    _stripe_mod.api_key = _STRIPE_SECRET_KEY
+
+# ---------------------------------------------------------------------------
 # User model for flask-login
 # ---------------------------------------------------------------------------
 
@@ -173,9 +199,47 @@ class User(UserMixin):
         self.id = row["id"]
         self.email = row["email"]
         self.email_verified = bool(row["email_verified"])
+        # Stripe billing fields (graceful for old schemas)
+        try:
+            self.stripe_customer_id = row["stripe_customer_id"]
+        except (KeyError, IndexError):
+            self.stripe_customer_id = None
+        try:
+            self.subscription_status = row["subscription_status"] or "trialing"
+        except (KeyError, IndexError):
+            self.subscription_status = "trialing"
+        try:
+            self.trial_ends_at = row["trial_ends_at"]
+        except (KeyError, IndexError):
+            self.trial_ends_at = None
+        try:
+            self.subscription_ends_at = row["subscription_ends_at"]
+        except (KeyError, IndexError):
+            self.subscription_ends_at = None
 
     def get_id(self):
         return str(self.id)
+
+    @property
+    def has_active_subscription(self) -> bool:
+        """True if user has an active paid subscription or is within trial."""
+        if self.subscription_status == "active":
+            return True
+        if self.subscription_status == "trialing" and self.trial_ends_at:
+            return self.trial_ends_at > datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        return False
+
+    @property
+    def trial_days_remaining(self) -> int:
+        """Days left in trial, or 0 if expired / not trialing."""
+        if self.subscription_status != "trialing" or not self.trial_ends_at:
+            return 0
+        try:
+            end = datetime.strptime(self.trial_ends_at[:19], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return 0
+        delta = (end - datetime.utcnow()).days
+        return max(delta, 0)
 
 
 @login_manager.user_loader
@@ -862,6 +926,9 @@ def signup():
     uid = create_user(email, pw_hash, token)
     # Auto-verify: skip email verification, grant immediate access
     verify_user_email(uid)
+    # Set 14-day trial period
+    trial_end = (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+    update_user_stripe(uid, subscription_status="trialing", trial_ends_at=trial_end)
     row = get_user_by_id(uid)
     login_user(User(row))
     return redirect(url_for("dashboard"))
@@ -927,6 +994,53 @@ def verified_required(f):
             return render_template_string(UNVERIFIED_HTML)
         return f(*args, **kwargs)
 
+    return decorated
+
+
+# ---------------------------------------------------------------------------
+# Subscription-required decorator (gated by _STRIPE_ENABLED)
+# ---------------------------------------------------------------------------
+
+_PAYWALL_HTML = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>Subscribe — LeadClaw</title>"
+    "<style>"
+    "body{font-family:system-ui;background:#0f1117;color:#e2e8f0;display:flex;"
+    "justify-content:center;align-items:center;min-height:100vh;margin:0}"
+    ".card{background:#1a1d2e;border-radius:12px;padding:32px;max-width:420px;"
+    "text-align:center;border:1px solid #2d3148}"
+    "h1{font-size:22px;margin:0 0 12px}"
+    "p{color:#94a3b8;line-height:1.5;margin:0 0 24px}"
+    "a.btn{display:inline-block;padding:12px 28px;background:#6366f1;color:#fff;"
+    "text-decoration:none;border-radius:8px;font-weight:600;font-size:15px}"
+    "a.btn:hover{background:#4f46e5}"
+    ".logout{margin-top:16px;display:block;color:#64748b;font-size:13px}"
+    "</style></head><body>"
+    "<div class='card'>"
+    "<h1>Your trial has ended</h1>"
+    "<p>Subscribe to keep using LeadClaw and manage your leads, requests, and pipeline.</p>"
+    "<a class='btn' href='/billing/checkout'>Subscribe Now</a>"
+    "<a class='logout' href='/logout'>Log out</a>"
+    "</div></body></html>"
+)
+
+
+def subscription_required(f):
+    """Wrap a view so it requires an active subscription or trial.
+
+    When Stripe is not configured (_STRIPE_ENABLED=False), this is a no-op
+    — all verified users get full access.
+    """
+    from functools import wraps
+
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not _STRIPE_ENABLED:
+            return f(*args, **kwargs)
+        if current_user.has_active_subscription:
+            return f(*args, **kwargs)
+        return render_template_string(_PAYWALL_HTML), 402
     return decorated
 
 
@@ -1125,6 +1239,7 @@ def manifest():
 @app.route("/")
 @login_required
 @verified_required
+@subscription_required
 def dashboard():
     return _build_dashboard_html(current_user.email)
 
@@ -1132,6 +1247,7 @@ def dashboard():
 @app.route("/api/summary")
 @login_required
 @verified_required
+@subscription_required
 def route_api_summary():
     try:
         return jsonify(api_summary(current_user.id))
@@ -1143,6 +1259,7 @@ def route_api_summary():
 @app.route("/api/closed")
 @login_required
 @verified_required
+@subscription_required
 def route_api_closed():
     try:
         return jsonify(api_closed(current_user.id))
@@ -1154,6 +1271,7 @@ def route_api_closed():
 @app.route("/api/pilot")
 @login_required
 @verified_required
+@subscription_required
 def route_api_pilot():
     status = request.args.get("status") or None
     try:
@@ -1166,6 +1284,7 @@ def route_api_pilot():
 @app.route("/api/leads/<int:lead_id>")
 @login_required
 @verified_required
+@subscription_required
 def route_get_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if lead:
@@ -1181,6 +1300,7 @@ def route_get_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/draft-message", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_draft_message(lead_id):
     """Return a copy-ready message for a lead. Pure template, no AI."""
     from leadclaw.drafting import MSG_TYPES, draft_message
@@ -1204,6 +1324,7 @@ def route_draft_message(lead_id):
 @app.route("/api/leads", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_add_lead():
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()
@@ -1244,6 +1365,7 @@ def route_add_lead():
 @app.route("/api/leads/<int:lead_id>/edit", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_edit_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1273,6 +1395,7 @@ def route_edit_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/quote", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_quote_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1291,6 +1414,7 @@ def route_quote_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/won", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_won_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1302,6 +1426,7 @@ def route_won_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/lost", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_lost_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1320,6 +1445,7 @@ def route_lost_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/delete", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_delete_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1336,6 +1462,7 @@ def route_delete_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/book", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_book_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1360,6 +1487,7 @@ def api_book_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/complete", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_complete_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1371,6 +1499,7 @@ def api_complete_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/invoice", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_invoice_lead(lead_id):
     from leadclaw.config import DEFAULT_INVOICE_REMINDER_DAYS
 
@@ -1398,6 +1527,7 @@ def api_invoice_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/paid", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_paid_lead(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1416,6 +1546,7 @@ def api_paid_lead(lead_id):
 @app.route("/api/leads/<int:lead_id>/next-service", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_next_service(lead_id):
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
     if not lead:
@@ -1441,6 +1572,7 @@ def api_next_service(lead_id):
 @app.route("/api/availability", methods=["GET"])
 @login_required
 @verified_required
+@subscription_required
 def route_get_availability():
     """Return current availability settings for the logged-in user."""
     try:
@@ -1456,6 +1588,7 @@ def route_get_availability():
 @app.route("/api/availability", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_set_availability():
     """Save availability settings."""
     data = request.get_json(silent=True) or {}
@@ -1480,6 +1613,7 @@ def route_set_availability():
 @app.route("/api/availability/check")
 @login_required
 @verified_required
+@subscription_required
 def route_check_availability():
     """Check whether a date is available. ?date=YYYY-MM-DD"""
     date_str = (request.args.get("date") or "").strip()
@@ -1501,6 +1635,7 @@ _REQUEST_FILTER_VALUES = {"unbooked", "booked", "all"}
 @app.route("/api/requests")
 @login_required
 @verified_required
+@subscription_required
 def route_api_requests():
     """Return public request leads filtered by status group."""
     filter_val = (request.args.get("filter") or "unbooked").strip()
@@ -1517,6 +1652,7 @@ def route_api_requests():
 @app.route("/api/requests/<int:lead_id>/seen", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_mark_request_seen(lead_id):
     """Mark a single public request as seen by the owner."""
     lead = get_lead_by_id(lead_id, user_id=current_user.id)
@@ -1529,6 +1665,7 @@ def route_mark_request_seen(lead_id):
 @app.route("/api/requests/seen-all", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_mark_all_requests_seen():
     """Mark all unseen public requests as seen."""
     count = mark_all_requests_seen(user_id=current_user.id)
@@ -1538,6 +1675,7 @@ def route_mark_all_requests_seen():
 @app.route("/api/reminders/dismiss", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def api_dismiss_reminder():
     data = request.get_json(silent=True) or {}
     lead_id = data.get("lead_id")
@@ -1560,6 +1698,7 @@ def api_dismiss_reminder():
 @app.route("/api/usage")
 @login_required
 @verified_required
+@subscription_required
 def route_api_usage():
     try:
         return jsonify(api_usage(current_user.id))
@@ -1581,6 +1720,7 @@ def _get_pilot_candidate(cid: int):
 @app.route("/api/pilot/<int:cid>/save-draft", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_save_draft(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1596,6 +1736,7 @@ def route_pilot_save_draft(cid):
 @app.route("/api/pilot/<int:cid>/save-and-approve", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_save_and_approve(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1612,6 +1753,7 @@ def route_pilot_save_and_approve(cid):
 @app.route("/api/pilot/<int:cid>/approve", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_approve(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1625,6 +1767,7 @@ def route_pilot_approve(cid):
 @app.route("/api/pilot/<int:cid>/mark-sent", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_mark_sent(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1636,6 +1779,7 @@ def route_pilot_mark_sent(cid):
 @app.route("/api/pilot/<int:cid>/log-reply", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_log_reply(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1661,6 +1805,7 @@ def route_pilot_log_reply(cid):
 @app.route("/api/pilot/<int:cid>/convert", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_convert(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
@@ -1672,12 +1817,220 @@ def route_pilot_convert(cid):
 @app.route("/api/pilot/<int:cid>/pass", methods=["POST"])
 @login_required
 @verified_required
+@subscription_required
 def route_pilot_pass(cid):
     candidate = _get_pilot_candidate(cid)
     if not candidate:
         return jsonify({"error": f"Candidate {cid} not found"}), 404
     _pilot.set_status(cid, "passed", user_id=current_user.id)
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Billing routes (Stripe)
+# ---------------------------------------------------------------------------
+
+
+@app.route("/billing/checkout", methods=["GET", "POST"])
+@login_required
+@verified_required
+def billing_checkout():
+    """Create a Stripe Checkout Session and redirect to Stripe."""
+    if not _STRIPE_ENABLED:
+        return redirect(url_for("dashboard"))
+
+    import stripe
+
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+
+    # Create or reuse Stripe customer
+    customer_id = current_user.stripe_customer_id
+    if not customer_id:
+        customer = stripe.Customer.create(email=current_user.email)
+        customer_id = customer.id
+        update_user_stripe(current_user.id, stripe_customer_id=customer_id)
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        payment_method_types=["card"],
+        line_items=[{"price": _STRIPE_PRICE_ID, "quantity": 1}],
+        mode="subscription",
+        success_url=app_url + "/billing/success?session_id={CHECKOUT_SESSION_ID}",
+        cancel_url=app_url + "/billing/cancel",
+    )
+    return redirect(session.url, code=303)
+
+
+@app.route("/billing/success")
+@login_required
+@verified_required
+def billing_success():
+    """Post-checkout landing page. Stripe webhook handles the actual activation."""
+    _SUCCESS_HTML = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Subscribed — LeadClaw</title>"
+        "<style>"
+        "body{font-family:system-ui;background:#0f1117;color:#e2e8f0;display:flex;"
+        "justify-content:center;align-items:center;min-height:100vh;margin:0}"
+        ".card{background:#1a1d2e;border-radius:12px;padding:32px;max-width:420px;"
+        "text-align:center;border:1px solid #2d3148}"
+        "h1{font-size:22px;margin:0 0 12px;color:#22c55e}"
+        "p{color:#94a3b8;line-height:1.5;margin:0 0 24px}"
+        "a.btn{display:inline-block;padding:12px 28px;background:#6366f1;color:#fff;"
+        "text-decoration:none;border-radius:8px;font-weight:600}"
+        "</style></head><body>"
+        "<div class='card'>"
+        "<h1>You're subscribed!</h1>"
+        "<p>Thanks for subscribing to LeadClaw. Your account is now active.</p>"
+        "<a class='btn' href='/'>Go to Dashboard</a>"
+        "</div></body></html>"
+    )
+    return render_template_string(_SUCCESS_HTML)
+
+
+@app.route("/billing/cancel")
+@login_required
+@verified_required
+def billing_cancel():
+    """User cancelled Stripe checkout. Redirect back to dashboard."""
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/billing/portal", methods=["GET", "POST"])
+@login_required
+@verified_required
+def billing_portal():
+    """Redirect to Stripe Customer Portal for subscription management."""
+    if not _STRIPE_ENABLED:
+        return redirect(url_for("dashboard"))
+
+    import stripe
+
+    customer_id = current_user.stripe_customer_id
+    if not customer_id:
+        return redirect(url_for("billing_checkout"))
+
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+    portal_session = stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=app_url + "/",
+    )
+    return redirect(portal_session.url, code=303)
+
+
+@app.route("/stripe/webhook", methods=["POST"])
+def stripe_webhook():
+    """Handle Stripe webhook events. No auth — verified by signature."""
+    if not _STRIPE_ENABLED:
+        return jsonify({"error": "Stripe not configured"}), 400
+
+    import stripe
+
+    payload = request.get_data(as_text=False)
+    sig_header = request.headers.get("Stripe-Signature", "")
+
+    if _STRIPE_WEBHOOK_SECRET:
+        try:
+            event = stripe.Webhook.construct_event(payload, sig_header, _STRIPE_WEBHOOK_SECRET)
+        except ValueError:
+            return jsonify({"error": "Invalid payload"}), 400
+        except stripe.error.SignatureVerificationError:
+            return jsonify({"error": "Invalid signature"}), 400
+    else:
+        # No webhook secret configured — parse raw (dev only)
+        try:
+            event = stripe.Event.construct_from(_json.loads(payload), stripe.api_key)
+        except Exception:
+            return jsonify({"error": "Invalid payload"}), 400
+
+    event_type = event["type"]
+    data_obj = event["data"]["object"]
+
+    if event_type == "checkout.session.completed":
+        customer_id = data_obj.get("customer")
+        if customer_id:
+            _activate_subscription(customer_id)
+
+    elif event_type == "customer.subscription.updated":
+        customer_id = data_obj.get("customer")
+        status = data_obj.get("status")
+        if customer_id and status:
+            _update_subscription_status(customer_id, status, data_obj)
+
+    elif event_type == "customer.subscription.deleted":
+        customer_id = data_obj.get("customer")
+        if customer_id:
+            _cancel_subscription(customer_id)
+
+    elif event_type == "invoice.payment_failed":
+        customer_id = data_obj.get("customer")
+        if customer_id:
+            _update_subscription_status(customer_id, "past_due")
+
+    return jsonify({"ok": True}), 200
+
+
+def _activate_subscription(stripe_customer_id: str):
+    """Mark the user with this Stripe customer as active."""
+    from leadclaw.db import get_conn
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET subscription_status = 'active' WHERE stripe_customer_id = ?",
+            (stripe_customer_id,),
+        )
+
+
+def _update_subscription_status(stripe_customer_id: str, status: str, sub_obj=None):
+    """Update subscription status from a Stripe event."""
+    from leadclaw.db import get_conn
+
+    fields = {"subscription_status": status}
+    if sub_obj:
+        period_end = sub_obj.get("current_period_end")
+        if period_end:
+            from datetime import datetime as _dt
+
+            fields["subscription_ends_at"] = _dt.utcfromtimestamp(period_end).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    vals = list(fields.values()) + [stripe_customer_id]
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE users SET {set_clause} WHERE stripe_customer_id = ?", vals
+        )
+
+
+def _cancel_subscription(stripe_customer_id: str):
+    """Mark subscription as canceled."""
+    from leadclaw.db import get_conn
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET subscription_status = 'canceled' WHERE stripe_customer_id = ?",
+            (stripe_customer_id,),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Billing status API (for dashboard trial banner)
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/billing")
+@login_required
+@verified_required
+def route_api_billing():
+    """Return billing status for the current user (used by dashboard JS)."""
+    return jsonify({
+        "stripe_enabled": _STRIPE_ENABLED,
+        "subscription_status": current_user.subscription_status,
+        "trial_days_remaining": current_user.trial_days_remaining,
+        "has_active_subscription": current_user.has_active_subscription,
+    })
 
 
 # ---------------------------------------------------------------------------
