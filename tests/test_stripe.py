@@ -35,11 +35,13 @@ def fresh_db():
 
 @pytest.fixture
 def client():
-    from leadclaw.web import app
+    from leadclaw.web import app, limiter
 
     app.config["TESTING"] = True
+    limiter.reset()
     with app.test_client() as c:
         yield c
+    limiter.reset()
 
 
 @pytest.fixture

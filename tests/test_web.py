@@ -35,10 +35,12 @@ def client(fresh_db):
     app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
     from leadclaw.web import limiter
-    limiter.enabled = False
+    # Reset limiter counters before each test to prevent cross-test rate-limit bleed.
+    # We keep the limiter enabled so tests that verify rate-limiting still work.
+    limiter.reset()
     with app.test_client() as c:
         yield c
-    limiter.enabled = True
+    limiter.reset()
 
 
 @pytest.fixture
