@@ -492,15 +492,30 @@ _REQUEST_SUCCESS_HTML = (
 )
 
 
-def _send_new_request_notification(lead: dict):
+def _send_new_request_notification(lead: dict, user_id: int = 1):
     """Fire-and-forget owner alert when a new public request comes in.
 
+    Looks up the owner from the users table. Checks notify_new_requests pref.
     Tries Resend first, then SMTP, then logs to stderr in dev mode.
     Never raises — notification failures must not break form submission.
     """
-    owner_email = os.environ.get("OWNER_NOTIFY_EMAIL") or os.environ.get("SMTP_USER", "").strip()
-    if not owner_email:
-        # No owner email configured — skip silently
+    try:
+        owner = get_user_by_id(user_id)
+    except Exception:
+        owner = None
+    if not owner:
+        return
+
+    # Respect notification preference
+    try:
+        if not owner["notify_new_requests"]:
+            return
+    except (KeyError, IndexError):
+        pass  # column missing on old schema — default to sending
+
+    # Determine recipient: user's own email, or OWNER_NOTIFY_EMAIL override
+    owner_email = os.environ.get("OWNER_NOTIFY_EMAIL") or owner["email"]
+    if not owner_email or owner_email == "cli@localhost":
         return
 
     app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
@@ -512,7 +527,7 @@ def _send_new_request_notification(lead: dict):
     pref_tw = lead.get("requested_time_window") or ""
     notes = lead.get("notes") or ""
 
-    subject = f"New LeadClaw request: {service} from {name}"
+    subject = f"New request from {name} — {service}"
     body_lines = [
         "New service request submitted via LeadClaw:",
         "",
@@ -803,7 +818,8 @@ def public_request():
             "requested_date": requested_date,
             "requested_time_window": requested_time_window,
             "notes": notes,
-        }
+        },
+        user_id=1,
     )
 
     return render_template_string(_REQUEST_SUCCESS_HTML, name=name, avail_warning=avail_warning)

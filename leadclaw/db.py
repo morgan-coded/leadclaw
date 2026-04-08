@@ -213,6 +213,15 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        # --- Column migration: add notify_new_requests to users ---
+        try:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN notify_new_requests INTEGER NOT NULL DEFAULT 1"
+            )
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
         # Ensure the default CLI user (id=1) exists so FK DEFAULT 1 is always valid
         conn.execute(
             """
