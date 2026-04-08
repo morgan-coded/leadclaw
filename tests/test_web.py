@@ -20,7 +20,7 @@ from tests.conftest import TEST_DB
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def fresh_db():
     if os.path.exists(TEST_DB):
         os.remove(TEST_DB)
@@ -31,11 +31,14 @@ def fresh_db():
 
 
 @pytest.fixture
-def client():
+def client(fresh_db):
     app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
+    from leadclaw.web import limiter
+    limiter.enabled = False
     with app.test_client() as c:
         yield c
+    limiter.enabled = True
 
 
 @pytest.fixture
@@ -63,13 +66,13 @@ def auth_client(client):
 # ---------------------------------------------------------------------------
 
 
-def test_api_summary_empty_db():
+def test_api_summary_empty_db(fresh_db):
     data = api_summary(user_id=1)
     assert "pipeline" in data and "today" in data and "stale" in data and "active" in data
     assert data["pipeline"]["open_value"] == 0
 
 
-def test_api_summary_with_leads():
+def test_api_summary_with_leads(fresh_db):
     queries.add_lead("Web Test", "roofing", phone="555-1111", user_id=1)
     id2, _ = queries.add_lead("Quoted Lead", "painting", user_id=1)
     queries.update_quote(id2, 1500.0)
@@ -79,7 +82,7 @@ def test_api_summary_with_leads():
     assert "Web Test" in names and "Quoted Lead" in names
 
 
-def test_api_summary_lead_fields():
+def test_api_summary_lead_fields(fresh_db):
     queries.add_lead(
         "Field Check", "fencing", phone="555-9999", email="a@b.com", notes="test", user_id=1
     )
@@ -91,12 +94,12 @@ def test_api_summary_lead_fields():
     assert "id" in lead and "follow_up_after" in lead
 
 
-def test_api_closed_empty():
+def test_api_closed_empty(fresh_db):
     data = api_closed(user_id=1)
     assert data["closed"] == []
 
 
-def test_api_closed_contains_won_and_lost():
+def test_api_closed_contains_won_and_lost(fresh_db):
     id1, _ = queries.add_lead("Won Lead", "roofing", user_id=1)
     id2, _ = queries.add_lead("Lost Lead", "painting", user_id=1)
     id3, _ = queries.add_lead("Active Lead", "gutters", user_id=1)
@@ -109,7 +112,7 @@ def test_api_closed_contains_won_and_lost():
     assert "Active Lead" not in names
 
 
-def test_api_closed_includes_lost_reason():
+def test_api_closed_includes_lost_reason(fresh_db):
     id1, _ = queries.add_lead("Lost With Reason", "painting", user_id=1)
     queries.mark_lost(id1, "price")
     data = api_closed(user_id=1)
@@ -366,26 +369,26 @@ def test_post_delete_not_found(auth_client):
 # ---------------------------------------------------------------------------
 
 
-def test_html_contains_add_button():
+def test_html_contains_add_button(fresh_db):
     assert "openAdd()" in DASHBOARD_HTML
     assert "+ Add Lead" in DASHBOARD_HTML
 
 
-def test_html_contains_all_modals():
+def test_html_contains_all_modals(fresh_db):
     # Sheets replaced modals in the mobile-first UI
     assert 'id="sheet-edit"' in DASHBOARD_HTML
     assert 'id="sheet-quote"' in DASHBOARD_HTML
     assert 'id="sheet-lost"' in DASHBOARD_HTML
 
 
-def test_html_contains_closed_tab():
+def test_html_contains_closed_tab(fresh_db):
     # Closed is now under the 'more' tab
     assert "switchTab('more')" in DASHBOARD_HTML
     assert 'id="tab-more"' in DASHBOARD_HTML
     assert 'id="closed"' in DASHBOARD_HTML
 
 
-def test_html_renders_active_lead_actions():
+def test_html_renders_active_lead_actions(fresh_db):
     assert "openQuote(" in DASHBOARD_HTML
     assert "openEdit(" in DASHBOARD_HTML
     assert "openLost(" in DASHBOARD_HTML
@@ -394,44 +397,44 @@ def test_html_renders_active_lead_actions():
     assert "Send Quote" in DASHBOARD_HTML
 
 
-def test_html_closed_leads_delete_only():
+def test_html_closed_leads_delete_only(fresh_db):
     # Closed/paid/won/lost leads show delete only — check the status list used for this
     assert "doDelete(" in DASHBOARD_HTML
 
 
-def test_html_duplicate_warning_element():
+def test_html_duplicate_warning_element(fresh_db):
     assert 'id="dup-warn"' in DASHBOARD_HTML
     assert "duplicates" in DASHBOARD_HTML
 
 
-def test_html_client_validation_email():
+def test_html_client_validation_email(fresh_db):
     assert "validEmail" in DASHBOARD_HTML
 
 
-def test_html_client_validation_date():
+def test_html_client_validation_date(fresh_db):
     assert "validDate" in DASHBOARD_HTML
 
 
-def test_html_lost_reasons_injected():
+def test_html_lost_reasons_injected(fresh_db):
     assert "LOST_REASONS=" in DASHBOARD_HTML.replace(" ", "")
     assert "price" in DASHBOARD_HTML
 
 
-def test_html_max_name_injected():
+def test_html_max_name_injected(fresh_db):
     assert f"MAX_NAME={MAX_NAME_LENGTH}" in DASHBOARD_HTML.replace(" ", "")
 
 
-def test_html_api_closed_fetch():
+def test_html_api_closed_fetch(fresh_db):
     assert "/api/closed" in DASHBOARD_HTML
 
 
-def test_html_pilot_tab_present():
+def test_html_pilot_tab_present(fresh_db):
     # Pilot is now under the 'more' tab
     assert "switchTab('more')" in DASHBOARD_HTML
     assert 'id="tab-more"' in DASHBOARD_HTML
 
 
-def test_html_pilot_table_columns():
+def test_html_pilot_table_columns(fresh_db):
     assert 'id="pilot-table"' in DASHBOARD_HTML
     assert "Score" in DASHBOARD_HTML
     assert "Source" in DASHBOARD_HTML
@@ -439,7 +442,7 @@ def test_html_pilot_table_columns():
     assert "Reply" in DASHBOARD_HTML
 
 
-def test_html_pilot_action_buttons():
+def test_html_pilot_action_buttons(fresh_db):
     assert "openPilotDraft" in DASHBOARD_HTML
     assert "pilotAction" in DASHBOARD_HTML
     assert "openPilotReply" in DASHBOARD_HTML
@@ -448,17 +451,17 @@ def test_html_pilot_action_buttons():
     assert "log-reply" in DASHBOARD_HTML
 
 
-def test_html_pilot_modals():
+def test_html_pilot_modals(fresh_db):
     # Sheets replaced modals in the mobile-first UI
     assert 'id="sheet-pilot-draft"' in DASHBOARD_HTML
     assert 'id="sheet-pilot-reply"' in DASHBOARD_HTML
 
 
-def test_html_pilot_status_filter():
+def test_html_pilot_status_filter(fresh_db):
     assert 'id="pilot-filter"' in DASHBOARD_HTML
 
 
-def test_html_signout_link():
+def test_html_signout_link(fresh_db):
     """Dashboard must contain a sign-out link."""
     assert "/logout" in DASHBOARD_HTML
     # Sign out label (case may vary with mobile-first UI)

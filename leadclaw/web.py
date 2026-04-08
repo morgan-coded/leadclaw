@@ -162,6 +162,13 @@ app.secret_key = _SECRET_KEY
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("APP_URL", "").startswith("https")
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=[],  # No global limit, routes opt-in
+    default_limits_exempt_when=lambda: app.config.get("TESTING", False),
+)
+
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
@@ -1041,6 +1048,7 @@ def public_request_slug(slug):
 
 
 @app.route("/signup", methods=["GET", "POST"])
+@limiter.limit("5/minute")
 def signup():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard"))
@@ -1134,6 +1142,7 @@ def resend_verification():
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("10/minute")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard"))
