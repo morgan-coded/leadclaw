@@ -277,7 +277,9 @@ def update_candidate(cid: int, user_id: Optional[int] = None, **fields):
             phone = updates.get("phone", candidate["phone"])
             email = updates.get("email", candidate["email"])
             source = candidate["source"] or "manual_entry"
-            updates["score"] = score_candidate(svc, has_phone=bool(phone), has_email=bool(email), source=source)
+            updates["score"] = score_candidate(
+                svc, has_phone=bool(phone), has_email=bool(email), source=source
+            )
 
     updates["last_updated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     set_clause = ", ".join(f"{k} = ?" for k in updates)

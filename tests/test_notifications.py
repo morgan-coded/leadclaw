@@ -305,8 +305,9 @@ def test_request_triggers_resend_notification(monkeypatch):
 
     limiter.reset()
 
-    with patch("urllib.request.urlopen", mock_urlopen), patch(
-        "urllib.request.Request", mock_req_class
+    with (
+        patch("urllib.request.urlopen", mock_urlopen),
+        patch("urllib.request.Request", mock_req_class),
     ):
         client = web_mod.app.test_client()
         r = client.post("/request", data=_REQUEST_DATA)

@@ -327,8 +327,12 @@ def test_send_followup_digest_skips_notifications_off():
     from leadclaw.db import get_conn
 
     with get_conn() as conn:
-        conn.execute("UPDATE leads SET follow_up_after = date('now', '-2 days') WHERE id = ?", (lid,))
-        conn.execute("UPDATE users SET email = 'owner@test.com', notify_new_requests = 0 WHERE id = 1")
+        conn.execute(
+            "UPDATE leads SET follow_up_after = date('now', '-2 days') WHERE id = ?", (lid,)
+        )
+        conn.execute(
+            "UPDATE users SET email = 'owner@test.com', notify_new_requests = 0 WHERE id = 1"
+        )
 
     result = send_followup_digest(1)
     assert result is False
@@ -344,7 +348,10 @@ def test_get_overdue_followups():
     from leadclaw.db import get_conn
 
     with get_conn() as conn:
-        conn.execute("UPDATE leads SET follow_up_after = date('now', '-1 days') WHERE id IN (?, ?, ?)", (lid1, lid2, lid3))
+        conn.execute(
+            "UPDATE leads SET follow_up_after = date('now', '-1 days') WHERE id IN (?, ?, ?)",
+            (lid1, lid2, lid3),
+        )
 
     overdue = queries.get_overdue_followups(1)
     ids = [r["id"] for r in overdue]
@@ -366,7 +373,9 @@ def test_run_send_digests():
     from leadclaw.db import get_conn
 
     with get_conn() as conn:
-        conn.execute("UPDATE leads SET follow_up_after = date('now', '-1 days') WHERE id = ?", (lid,))
+        conn.execute(
+            "UPDATE leads SET follow_up_after = date('now', '-1 days') WHERE id = ?", (lid,)
+        )
 
     sent = _run_send_digests()
     assert sent >= 1

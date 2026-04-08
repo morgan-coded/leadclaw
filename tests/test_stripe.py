@@ -211,7 +211,9 @@ def test_subscription_required_blocks_expired_trial(auth_client):
 
     # Set expired trial
     expired = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-    update_user_stripe(auth_client._test_user_id, subscription_status="trialing", trial_ends_at=expired)
+    update_user_stripe(
+        auth_client._test_user_id, subscription_status="trialing", trial_ends_at=expired
+    )
 
     original = web_mod._STRIPE_ENABLED
     web_mod._STRIPE_ENABLED = True
@@ -243,7 +245,9 @@ def test_subscription_required_allows_trial(auth_client):
     import leadclaw.web as web_mod
 
     trial_end = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-    update_user_stripe(auth_client._test_user_id, subscription_status="trialing", trial_ends_at=trial_end)
+    update_user_stripe(
+        auth_client._test_user_id, subscription_status="trialing", trial_ends_at=trial_end
+    )
 
     original = web_mod._STRIPE_ENABLED
     web_mod._STRIPE_ENABLED = True
@@ -311,8 +315,10 @@ def test_billing_checkout_creates_stripe_customer(auth_client):
         mock_session = MagicMock()
         mock_session.url = "https://checkout.stripe.com/test"
 
-        with patch("stripe.Customer.create", return_value=mock_customer) as mock_cust_create, \
-             patch("stripe.checkout.Session.create", return_value=mock_session) as mock_sess_create:
+        with (
+            patch("stripe.Customer.create", return_value=mock_customer) as mock_cust_create,
+            patch("stripe.checkout.Session.create", return_value=mock_session) as mock_sess_create,
+        ):
             r = auth_client.get("/billing/checkout")
             assert r.status_code == 303
             assert mock_cust_create.called
@@ -374,15 +380,17 @@ def test_webhook_checkout_completed_activates_subscription(client):
     web_mod._STRIPE_ENABLED = True
     web_mod._STRIPE_WEBHOOK_SECRET = ""  # disable signature check for test
     try:
-        event_payload = json.dumps({
-            "id": "evt_test",
-            "type": "checkout.session.completed",
-            "data": {
-                "object": {
-                    "customer": "cus_webhook_test",
-                }
-            },
-        })
+        event_payload = json.dumps(
+            {
+                "id": "evt_test",
+                "type": "checkout.session.completed",
+                "data": {
+                    "object": {
+                        "customer": "cus_webhook_test",
+                    }
+                },
+            }
+        )
 
         with patch("stripe.Event.construct_from") as mock_construct:
             mock_construct.return_value = json.loads(event_payload)
@@ -412,15 +420,17 @@ def test_webhook_subscription_deleted_cancels(client):
     web_mod._STRIPE_ENABLED = True
     web_mod._STRIPE_WEBHOOK_SECRET = ""
     try:
-        event_payload = json.dumps({
-            "id": "evt_cancel",
-            "type": "customer.subscription.deleted",
-            "data": {
-                "object": {
-                    "customer": "cus_cancel_test",
-                }
-            },
-        })
+        event_payload = json.dumps(
+            {
+                "id": "evt_cancel",
+                "type": "customer.subscription.deleted",
+                "data": {
+                    "object": {
+                        "customer": "cus_cancel_test",
+                    }
+                },
+            }
+        )
 
         with patch("stripe.Event.construct_from") as mock_construct:
             mock_construct.return_value = json.loads(event_payload)
@@ -486,7 +496,9 @@ def test_api_billing_returns_status(auth_client):
 def test_api_billing_reflects_trial(auth_client):
     """The /api/billing endpoint shows correct trial info."""
     trial_end = (datetime.utcnow() + timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
-    update_user_stripe(auth_client._test_user_id, subscription_status="trialing", trial_ends_at=trial_end)
+    update_user_stripe(
+        auth_client._test_user_id, subscription_status="trialing", trial_ends_at=trial_end
+    )
 
     r = auth_client.get("/api/billing")
     data = json.loads(r.data)

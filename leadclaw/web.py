@@ -524,7 +524,9 @@ textarea{resize:vertical;min-height:80px;}
 _REQUEST_FORM_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>{{ form_title|default('Request Service') }}</title>" + _REQUEST_CSS + "</head><body><div class='card'>"
+    "<title>{{ form_title|default('Request Service') }}</title>"
+    + _REQUEST_CSS
+    + "</head><body><div class='card'>"
     "<h1>🦞 {{ form_title|default('Request Service') }}</h1>"
     "<div class='sub'>Fill out the form and we'll get back to you shortly.</div>"
     "{% if error %}<div class='err'>{{ error }}</div>{% endif %}"
@@ -722,10 +724,16 @@ def send_followup_digest(user_id: int) -> bool:
         phone = lead["phone"] or "—"
         fu_date = str(lead["follow_up_after"])[:10] if lead["follow_up_after"] else today
         try:
-            days_overdue = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(fu_date, "%Y-%m-%d")).days
+            days_overdue = (
+                datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(fu_date, "%Y-%m-%d")
+            ).days
         except (ValueError, TypeError):
             days_overdue = 0
-        days_str = f"{days_overdue} day{'s' if days_overdue != 1 else ''} overdue" if days_overdue > 0 else "due today"
+        days_str = (
+            f"{days_overdue} day{'s' if days_overdue != 1 else ''} overdue"
+            if days_overdue > 0
+            else "due today"
+        )
         lines.append(f"  • {name} ({service}) — {phone} — {days_str}")
     if count > 10:
         lines.append(f"  …and {count - 10} more — check your dashboard")
@@ -744,7 +752,10 @@ def send_followup_digest(user_id: int) -> bool:
                 "https://api.resend.com/emails",
                 data=payload,
                 method="POST",
-                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {resend_key}",
+                    "Content-Type": "application/json",
+                },
             )
             try:
                 _ureq.urlopen(req, timeout=8)
@@ -1233,6 +1244,7 @@ def subscription_required(f):
         if current_user.has_active_subscription:
             return f(*args, **kwargs)
         return render_template_string(_PAYWALL_HTML), 402
+
     return decorated
 
 
@@ -1747,7 +1759,9 @@ def api_paid_lead(lead_id):
                 return jsonify({"error": "actual_amount must be >= 0"}), 400
         except (ValueError, TypeError):
             return jsonify({"error": "invalid actual_amount"}), 400
-    mark_paid(lead_id, recurring_days=recurring, actual_amount=actual_amount, user_id=current_user.id)
+    mark_paid(
+        lead_id, recurring_days=recurring, actual_amount=actual_amount, user_id=current_user.id
+    )
     return jsonify({"ok": True})
 
 
@@ -1934,11 +1948,13 @@ def route_api_reports():
             last_month_start = now.replace(month=now.month - 1, day=1).strftime("%Y-%m-%d")
 
         uid = current_user.id
-        return jsonify({
-            "this_month": get_report_stats(uid, this_month_start, next_month_start),
-            "last_month": get_report_stats(uid, last_month_start, this_month_start),
-            "all_time": get_report_stats_all_time(uid),
-        })
+        return jsonify(
+            {
+                "this_month": get_report_stats(uid, this_month_start, next_month_start),
+                "last_month": get_report_stats(uid, last_month_start, this_month_start),
+                "all_time": get_report_stats_all_time(uid),
+            }
+        )
     except Exception as e:
         print(f"API error: {e}", file=sys.stderr)
         return jsonify({"error": "An internal error occurred"}), 500
@@ -2236,9 +2252,7 @@ def _update_subscription_status(stripe_customer_id: str, status: str, sub_obj=No
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     vals = list(fields.values()) + [stripe_customer_id]
     with get_conn() as conn:
-        conn.execute(
-            f"UPDATE users SET {set_clause} WHERE stripe_customer_id = ?", vals
-        )
+        conn.execute(f"UPDATE users SET {set_clause} WHERE stripe_customer_id = ?", vals)
 
 
 def _cancel_subscription(stripe_customer_id: str):
@@ -2265,13 +2279,15 @@ def route_api_billing():
     app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
     slug = current_user.request_slug
     request_url = f"{app_url}/request/{slug}" if slug else None
-    return jsonify({
-        "stripe_enabled": _STRIPE_ENABLED,
-        "subscription_status": current_user.subscription_status,
-        "trial_days_remaining": current_user.trial_days_remaining,
-        "has_active_subscription": current_user.has_active_subscription,
-        "request_url": request_url,
-    })
+    return jsonify(
+        {
+            "stripe_enabled": _STRIPE_ENABLED,
+            "subscription_status": current_user.subscription_status,
+            "trial_days_remaining": current_user.trial_days_remaining,
+            "has_active_subscription": current_user.has_active_subscription,
+            "request_url": request_url,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

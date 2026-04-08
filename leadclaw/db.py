@@ -321,7 +321,12 @@ def update_user_stripe(user_id: int, **fields):
 
     Valid keys: stripe_customer_id, subscription_status, trial_ends_at, subscription_ends_at.
     """
-    _allowed = {"stripe_customer_id", "subscription_status", "trial_ends_at", "subscription_ends_at"}
+    _allowed = {
+        "stripe_customer_id",
+        "subscription_status",
+        "trial_ends_at",
+        "subscription_ends_at",
+    }
     updates = {k: v for k, v in fields.items() if k in _allowed}
     if not updates:
         return

@@ -159,7 +159,9 @@ def test_edit_clear_follow_up_after(auth_client):
 def test_edit_omitted_field_not_changed(auth_client):
     """Fields not present in the request body should not be modified."""
     uid = auth_client._test_user_id
-    lid, _ = queries.add_lead("Test", "mowing", phone="555-9999", email="keep@test.com", user_id=uid)
+    lid, _ = queries.add_lead(
+        "Test", "mowing", phone="555-9999", email="keep@test.com", user_id=uid
+    )
 
     r = auth_client.post(
         f"/api/leads/{lid}/edit",
@@ -329,9 +331,20 @@ def test_import_export_round_trip():
     # Export
     all_leads = queries.get_all_leads(limit=100)
     fields = [
-        "id", "name", "phone", "email", "service", "status",
-        "lost_reason", "lost_reason_notes", "quote_amount", "actual_amount",
-        "created_at", "last_contact_at", "follow_up_after", "notes",
+        "id",
+        "name",
+        "phone",
+        "email",
+        "service",
+        "status",
+        "lost_reason",
+        "lost_reason_notes",
+        "quote_amount",
+        "actual_amount",
+        "created_at",
+        "last_contact_at",
+        "follow_up_after",
+        "notes",
     ]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
@@ -341,6 +354,7 @@ def test_import_export_round_trip():
 
     # Clear DB and reimport
     from leadclaw.db import get_conn
+
     with get_conn() as conn:
         conn.execute("DELETE FROM leads")
 

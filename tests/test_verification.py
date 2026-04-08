@@ -65,7 +65,11 @@ def test_signup_sends_verification_email(client):
         with unittest_mock_send_verification() as mock_send:
             r = client.post(
                 "/signup",
-                data={"email": "verify@example.com", "password": "password123", "confirm": "password123"},
+                data={
+                    "email": "verify@example.com",
+                    "password": "password123",
+                    "confirm": "password123",
+                },
             )
             assert r.status_code == 200
             assert b"verification link" in r.data.lower() or b"verify" in r.data.lower()
@@ -90,7 +94,11 @@ def test_signup_does_not_auto_login_when_verification_required(client):
         with unittest_mock_send_verification():
             client.post(
                 "/signup",
-                data={"email": "nologin@example.com", "password": "password123", "confirm": "password123"},
+                data={
+                    "email": "nologin@example.com",
+                    "password": "password123",
+                    "confirm": "password123",
+                },
             )
         # Dashboard should redirect to login since user is not logged in
         r = client.get("/")
@@ -113,7 +121,11 @@ def test_signup_user_not_verified_in_db(client):
         with unittest_mock_send_verification():
             client.post(
                 "/signup",
-                data={"email": "unverified@example.com", "password": "password123", "confirm": "password123"},
+                data={
+                    "email": "unverified@example.com",
+                    "password": "password123",
+                    "confirm": "password123",
+                },
             )
         row = get_user_by_email("unverified@example.com")
         assert row is not None
@@ -139,7 +151,11 @@ def test_signup_auto_verifies_when_disabled(client):
     try:
         r = client.post(
             "/signup",
-            data={"email": "autoverify@example.com", "password": "password123", "confirm": "password123"},
+            data={
+                "email": "autoverify@example.com",
+                "password": "password123",
+                "confirm": "password123",
+            },
         )
         assert r.status_code == 302  # redirect to dashboard
 
@@ -311,7 +327,11 @@ def test_signup_generates_request_slug(client):
     try:
         client.post(
             "/signup",
-            data={"email": "slugtest@example.com", "password": "password123", "confirm": "password123"},
+            data={
+                "email": "slugtest@example.com",
+                "password": "password123",
+                "confirm": "password123",
+            },
         )
         row = get_user_by_email("slugtest@example.com")
         assert row is not None

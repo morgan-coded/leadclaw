@@ -657,7 +657,9 @@ def cmd_import(args):
         if missing:
             print(f"CSV is missing required column(s): {', '.join(sorted(missing))}")
             print("Required: name, service")
-            print("Optional: phone, email, notes, followup_days, quote_amount, actual_amount, follow_up_after, lost_reason, status")
+            print(
+                "Optional: phone, email, notes, followup_days, quote_amount, actual_amount, follow_up_after, lost_reason, status"
+            )
             return
 
         rows = list(reader)
