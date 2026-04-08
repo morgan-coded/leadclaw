@@ -1005,7 +1005,7 @@ def api_summary(user_id: int) -> dict:
     return {
         "pipeline": {
             "open_value": totals["open_value"],
-            "won_value": totals["won_value"],
+            "paid_value": totals["paid_value"],
             "lost_value": totals["lost_value"],
             "by_status": by_status,
         },

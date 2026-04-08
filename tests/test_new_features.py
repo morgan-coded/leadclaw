@@ -335,8 +335,8 @@ def test_pipeline_summary_counts_won_as_paid():
     assert "won" not in status_map
     assert status_map.get("paid", 0) >= 1
 
-    # Won value counted in won_value (now includes both won and paid)
-    assert totals["won_value"] == 1000.0
+    # Paid value includes both legacy 'won' and 'paid' statuses
+    assert totals["paid_value"] == 1000.0
 
 
 def test_api_closed_includes_won_leads():

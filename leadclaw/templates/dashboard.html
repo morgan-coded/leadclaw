@@ -641,7 +641,7 @@ async function load(){
     const p=d.pipeline,b=p.by_status||{};
     const pills=[
       {val:fmt(p.open_value),lbl:'Pipeline',cls:'accent'},
-      {val:fmt(p.won_value),lbl:'Paid',cls:'green'},
+      {val:fmt(p.paid_value),lbl:'Paid',cls:'green'},
       {val:fmt(p.lost_value),lbl:'Lost',cls:'red'},
       {val:(b.followup_due||{count:0}).count,lbl:'Follow-up Due',cls:'yellow'},
       {val:(b.new||{count:0}).count,lbl:'New',cls:''},

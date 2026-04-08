@@ -101,7 +101,7 @@ def test_pipeline_summary_open_closed_split():
     queries.mark_won(id2)
     _, totals = queries.get_pipeline_summary()
     assert totals["open_value"] == 500.0
-    assert totals["won_value"] == 1000.0
+    assert totals["paid_value"] == 1000.0
     assert totals["lost_value"] == 0.0
 
 

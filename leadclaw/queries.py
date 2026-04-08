@@ -172,7 +172,7 @@ def get_pipeline_summary(user_id: Optional[int] = None):
                 """
                 SELECT
                     COALESCE(SUM(CASE WHEN status NOT IN ('won','lost','paid') THEN quote_amount ELSE 0 END), 0) as open_value,
-                    COALESCE(SUM(CASE WHEN status IN ('won','paid') THEN quote_amount ELSE 0 END), 0) as won_value,
+                    COALESCE(SUM(CASE WHEN status IN ('won','paid') THEN quote_amount ELSE 0 END), 0) as paid_value,
                     COALESCE(SUM(CASE WHEN status = 'lost' THEN quote_amount ELSE 0 END), 0) as lost_value
                 FROM leads
                 WHERE user_id = ?
@@ -195,7 +195,7 @@ def get_pipeline_summary(user_id: Optional[int] = None):
                 """
                 SELECT
                     COALESCE(SUM(CASE WHEN status NOT IN ('won','lost','paid') THEN quote_amount ELSE 0 END), 0) as open_value,
-                    COALESCE(SUM(CASE WHEN status IN ('won','paid') THEN quote_amount ELSE 0 END), 0) as won_value,
+                    COALESCE(SUM(CASE WHEN status IN ('won','paid') THEN quote_amount ELSE 0 END), 0) as paid_value,
                     COALESCE(SUM(CASE WHEN status = 'lost' THEN quote_amount ELSE 0 END), 0) as lost_value
                 FROM leads
                 """
