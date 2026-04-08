@@ -236,6 +236,22 @@ def init_db():
                 if "duplicate column" not in str(e).lower():
                     raise
 
+        # --- Column migrations: request slug + business name on users ---
+        _slug_user_cols = [
+            "request_slug TEXT",
+            "business_name TEXT",
+        ]
+        for col_def in _slug_user_cols:
+            try:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col_def}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+        # Unique index on request_slug (CREATE INDEX IF NOT EXISTS is safe to re-run)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_request_slug ON users(request_slug)"
+        )
+
         # Ensure the default CLI user (id=1) exists so FK DEFAULT 1 is always valid
         conn.execute(
             """
@@ -311,6 +327,33 @@ def update_user_stripe(user_id: int, **fields):
     vals = list(updates.values()) + [user_id]
     with get_conn() as conn:
         conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", vals)
+
+
+def get_user_by_slug(slug: str):
+    """Return the users row for a given request_slug, or None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE request_slug = ?",
+            (slug,),
+        ).fetchone()
+
+
+def set_user_slug(user_id: int, slug: str):
+    """Set the request_slug on a user row."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET request_slug = ? WHERE id = ?",
+            (slug, user_id),
+        )
+
+
+def update_verify_token(user_id: int, token: str):
+    """Replace the verification token for a user (used for resend flow)."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET verify_token = ? WHERE id = ?",
+            (token, user_id),
+        )
 
 
 if __name__ == "__main__":

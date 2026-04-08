@@ -650,20 +650,30 @@ def test_http_pilot_not_found(auth_client):
 
 
 def test_signup_creates_user(client):
-    r = client.post(
-        "/signup",
-        data={
-            "email": "new@example.com",
-            "password": "securepass123",
-            "confirm": "securepass123",
-        },
-        follow_redirects=False,
-    )
-    # Auto-verify active (email delivery bypassed for pilot phase) — redirects to dashboard
-    assert r.status_code == 302
-    row = db.get_user_by_email("new@example.com")
-    assert row is not None
-    assert row["email_verified"] == 1
+    import leadclaw.config as cfg
+    import leadclaw.web as web_mod
+
+    original = cfg.REQUIRE_VERIFICATION
+    cfg.REQUIRE_VERIFICATION = False
+    web_mod.REQUIRE_VERIFICATION = False
+    try:
+        r = client.post(
+            "/signup",
+            data={
+                "email": "new@example.com",
+                "password": "securepass123",
+                "confirm": "securepass123",
+            },
+            follow_redirects=False,
+        )
+        # Auto-verify when REQUIRE_VERIFICATION=False — redirects to dashboard
+        assert r.status_code == 302
+        row = db.get_user_by_email("new@example.com")
+        assert row is not None
+        assert row["email_verified"] == 1
+    finally:
+        cfg.REQUIRE_VERIFICATION = original
+        web_mod.REQUIRE_VERIFICATION = original
 
 
 def test_signup_password_mismatch(client):

@@ -201,6 +201,11 @@
   <span id="trial-banner-text"></span>
   <span class="trial-cta"><a href="/billing/checkout">Subscribe</a> · <a href="/billing/portal">Manage</a></span>
 </div>
+<div class="request-url-bar" id="request-url-bar" style="display:none;padding:8px 16px;background:#1e293b;border-bottom:1px solid #334155;font-size:12px;color:var(--muted);align-items:center;gap:8px;">
+  <span>&#x1F517; Your request page:</span>
+  <code id="request-url-text" style="color:var(--accent);word-break:break-all;flex:1"></code>
+  <button onclick="copyRequestUrl()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;white-space:nowrap">Copy link</button>
+</div>
 <div class="stats-bar" id="stats-bar"></div>
 <nav class="bottom-nav">
   <button class="nav-item active" id="nav-today" onclick="switchTab('today')">
@@ -1492,9 +1497,21 @@ async function submitBookRequest(){
 }
 
 // Billing / trial banner
+let _requestUrl='';
+function copyRequestUrl(){
+  if(!_requestUrl)return;
+  navigator.clipboard.writeText(_requestUrl).then(()=>toast('Link copied!')).catch(()=>{});
+}
 async function loadBilling(){
   try{
     const b=await fetch('/api/billing').then(r=>r.json());
+    // Request URL bar (always shown if slug exists)
+    if(b.request_url){
+      _requestUrl=b.request_url;
+      document.getElementById('request-url-text').textContent=b.request_url;
+      document.getElementById('request-url-bar').style.display='flex';
+    }
+    // Trial/billing banner (only when Stripe is enabled)
     if(!b.stripe_enabled)return;
     const banner=document.getElementById('trial-banner');
     const txt=document.getElementById('trial-banner-text');

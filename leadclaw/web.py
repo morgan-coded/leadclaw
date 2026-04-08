@@ -5,13 +5,14 @@ Entry point:
     leadclaw-web        # uses env vars PORT (default 7432), HOST (default 127.0.0.1)
 
 Auth flow:
-    POST /signup  → create account (bcrypt-hashed password), auto-verify, log in immediately
+    POST /signup  → create account, send verification email, show "check your email"
     POST /login   → check password, create flask-login session
     GET  /logout  → clear session
-    GET  /verify/<token>  → (placeholder route for future email verification)
+    GET  /verify/<token>  → verify email, log in, redirect to dashboard
+    POST /verify/resend   → resend verification email (rate limited 3/hour)
 
-All dashboard routes require @login_required AND @verified_required.
-Signup currently auto-verifies, so new users get immediate dashboard access.
+All dashboard routes require @login_required, @verified_required, and @subscription_required.
+Set LEADCLAW_REQUIRE_VERIFICATION=0 to auto-verify on signup (for local dev).
 
 Environment variables:
     LEADCLAW_SECRET_KEY  - Flask secret key (required for prod; fallback prints warning)
@@ -19,6 +20,7 @@ Environment variables:
     PORT                 - Bind port (default: 7432)
     HOST                 - Bind host (default: 127.0.0.1)
     APP_URL              - Public base URL (e.g. https://app.leadclaw.io)
+    LEADCLAW_REQUIRE_VERIFICATION - Set to "0" to auto-verify on signup (default: "1")
 
 Stripe billing env vars (all optional — billing disabled if missing):
     STRIPE_SECRET_KEY    - Stripe secret key (sk_live_... or sk_test_...)
@@ -73,14 +75,18 @@ from leadclaw.config import (
     LOST_REASONS,
     MAX_FIELD_LENGTH,
     MAX_NAME_LENGTH,
+    REQUIRE_VERIFICATION,
 )
 from leadclaw.db import (
     create_user,
     get_user_by_email,
     get_user_by_id,
+    get_user_by_slug,
     get_user_by_verify_token,
     init_db,
+    set_user_slug,
     update_user_stripe,
+    update_verify_token,
     verify_user_email,
 )
 from leadclaw.queries import (
@@ -216,6 +222,10 @@ class User(UserMixin):
             self.subscription_ends_at = row["subscription_ends_at"]
         except (KeyError, IndexError):
             self.subscription_ends_at = None
+        try:
+            self.request_slug = row["request_slug"]
+        except (KeyError, IndexError):
+            self.request_slug = None
 
     def get_id(self):
         return str(self.id)
@@ -268,16 +278,12 @@ def _valid_date(val: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Email verification helpers (currently unused — signup auto-verifies)
+# Email verification helpers
 # ---------------------------------------------------------------------------
 
 
 def _send_verification_email(to_email: str, token: str):
-    """Send verification email via Resend API, SMTP, or print link in dev.
-
-    Not called during normal signup (auto-verify is enabled). Retained for
-    future use when email verification is re-enabled.
-    """
+    """Send verification email via Resend API, SMTP, or print link in dev."""
     app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
     link = f"{app_url}/verify/{token}"
 
@@ -419,7 +425,6 @@ SIGNUP_HTML = (
     "</div></body></html>"
 )
 
-# Not shown during normal signup (auto-verify skips this). Retained for future use.
 CHECK_EMAIL_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -429,12 +434,17 @@ CHECK_EMAIL_HTML = (
     "📧 We sent a verification link to <strong>{{ email }}</strong>.<br><br>"
     "Click the link in the email to activate your account."
     "</div>"
+    "{% if info %}<div class='info'>{{ info }}</div>{% endif %}"
+    "<form method='post' action='/verify/resend' style='margin-top:16px'>"
+    "<input type='hidden' name='email' value='{{ email }}'>"
+    "<button class='btn' type='submit' style='background:transparent;border:1px solid var(--border);"
+    "color:var(--muted);font-size:13px;min-height:40px'>Resend verification email</button>"
+    "</form>"
     "<div class='link'>Wrong email? <a href='/signup'>Start over</a> &nbsp;·&nbsp; "
     "<a href='/login'>Sign in</a></div>"
     "</div></body></html>"
 )
 
-# Shown only if a user's email_verified flag is manually unset. Not reachable via normal signup.
 UNVERIFIED_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -444,6 +454,11 @@ UNVERIFIED_HTML = (
     "📧 Please verify your email before accessing the dashboard.<br><br>"
     "Check your inbox for a verification link."
     "</div>"
+    "<form method='post' action='/verify/resend' style='margin-top:16px'>"
+    "<input type='hidden' name='email' value='{{ current_user.email }}'>"
+    "<button class='btn' type='submit' style='background:transparent;border:1px solid var(--border);"
+    "color:var(--muted);font-size:13px;min-height:40px'>Resend verification email</button>"
+    "</form>"
     "<div class='link'><a href='/logout'>Sign out</a></div>"
     "</div></body></html>"
 )
@@ -499,8 +514,8 @@ textarea{resize:vertical;min-height:80px;}
 _REQUEST_FORM_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>Request Service</title>" + _REQUEST_CSS + "</head><body><div class='card'>"
-    "<h1>🦞 Request Service</h1>"
+    "<title>{{ form_title|default('Request Service') }}</title>" + _REQUEST_CSS + "</head><body><div class='card'>"
+    "<h1>🦞 {{ form_title|default('Request Service') }}</h1>"
     "<div class='sub'>Fill out the form and we'll get back to you shortly.</div>"
     "{% if error %}<div class='err'>{{ error }}</div>{% endif %}"
     "<form method='post'>"
@@ -739,18 +754,19 @@ def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
-@app.route("/request", methods=["GET", "POST"])
-@limiter.limit("10/hour", methods=["POST"])
-def public_request():
-    """Public service request form. No auth required. Creates a lead on submit."""
+def _handle_request_form(user_id: int, form_title: str = "Request Service"):
+    """Shared handler for public request form (GET renders form, POST processes submission).
+
+    Used by both /request (legacy, user_id=1) and /request/<slug> (per-user).
+    """
     if request.method == "GET":
-        # Embed submission timestamp in form for min-time check
         form_ts = str(int(time.time()))
         return render_template_string(
             _REQUEST_FORM_HTML,
             services=_REQUEST_SERVICES,
             time_windows=_REQUEST_TIME_WINDOWS,
             form_ts=form_ts,
+            form_title=form_title,
         )
 
     # --- Anti-spam checks ---
@@ -768,6 +784,7 @@ def public_request():
                 error="Please take a moment to fill out the form.",
                 services=_REQUEST_SERVICES,
                 time_windows=_REQUEST_TIME_WINDOWS,
+                form_title=form_title,
             )
     except (ValueError, TypeError):
         pass
@@ -834,6 +851,7 @@ def public_request():
                 error=" ".join(errors),
                 services=_REQUEST_SERVICES,
                 time_windows=_REQUEST_TIME_WINDOWS,
+                form_title=form_title,
                 name=name,
                 phone=phone,
                 email=email or "",
@@ -850,7 +868,7 @@ def public_request():
     avail_warning = None
     if requested_date:
         try:
-            avail = _avail.get_availability(user_id=1)
+            avail = _avail.get_availability(user_id=user_id)
             check = _avail.check_date(requested_date, avail)
             if not check["ok"]:
                 avail_warning = (
@@ -870,7 +888,7 @@ def public_request():
         requested_date=requested_date,
         requested_time_window=requested_time_window,
         service_address=service_address,
-        user_id=1,
+        user_id=user_id,
     )
 
     _send_new_request_notification(
@@ -883,10 +901,43 @@ def public_request():
             "requested_time_window": requested_time_window,
             "notes": notes,
         },
-        user_id=1,
+        user_id=user_id,
     )
 
     return render_template_string(_REQUEST_SUCCESS_HTML, name=name, avail_warning=avail_warning)
+
+
+# Deprecated: legacy /request route hardwired to user_id=1.
+# Will be removed once all users have per-user /request/<slug> URLs.
+@app.route("/request", methods=["GET", "POST"])
+@limiter.limit("10/hour", methods=["POST"])
+def public_request():
+    """Public service request form (legacy). Routes to user_id=1."""
+    return _handle_request_form(user_id=1)
+
+
+@app.route("/request/<slug>", methods=["GET", "POST"])
+@limiter.limit("10/hour", methods=["POST"])
+def public_request_slug(slug):
+    """Per-user public request form. Resolves user from slug."""
+    owner = get_user_by_slug(slug)
+    if not owner:
+        return jsonify({"error": "Not found"}), 404
+    # Don't expose form for unverified or expired-trial users
+    if not owner["email_verified"]:
+        return jsonify({"error": "Not found"}), 404
+    # Check subscription: if Stripe is enabled and user has no active sub/trial, hide form
+    if _STRIPE_ENABLED:
+        user_obj = User(owner)
+        if not user_obj.has_active_subscription:
+            return jsonify({"error": "Not found"}), 404
+    # Use business_name for form branding if available
+    try:
+        biz_name = owner["business_name"]
+    except (KeyError, IndexError):
+        biz_name = None
+    form_title = f"Request Service — {biz_name}" if biz_name else "Request Service"
+    return _handle_request_form(user_id=owner["id"], form_title=form_title)
 
 
 # ---------------------------------------------------------------------------
@@ -924,14 +975,23 @@ def signup():
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     token = secrets.token_urlsafe(32)
     uid = create_user(email, pw_hash, token)
-    # Auto-verify: skip email verification, grant immediate access
-    verify_user_email(uid)
     # Set 14-day trial period
     trial_end = (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
     update_user_stripe(uid, subscription_status="trialing", trial_ends_at=trial_end)
-    row = get_user_by_id(uid)
-    login_user(User(row))
-    return redirect(url_for("dashboard"))
+    # Generate request slug for per-user /request/<slug> URL
+    slug = secrets.token_urlsafe(8)
+    set_user_slug(uid, slug)
+
+    if REQUIRE_VERIFICATION:
+        # Send verification email — user must verify before accessing dashboard
+        _send_verification_email(email, token)
+        return render_template_string(CHECK_EMAIL_HTML, email=email)
+    else:
+        # Dev/testing mode: auto-verify and log in immediately
+        verify_user_email(uid)
+        row = get_user_by_id(uid)
+        login_user(User(row))
+        return redirect(url_for("dashboard"))
 
 
 @app.route("/verify/<token>")
@@ -943,11 +1003,39 @@ def verify_email(token):
             error="Invalid or expired verification link.",
         )
     verify_user_email(row["id"])
+    # Set trial if not already set (covers users who signed up before Stripe was added)
+    try:
+        if not row["trial_ends_at"]:
+            trial_end = (datetime.utcnow() + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+            update_user_stripe(row["id"], subscription_status="trialing", trial_ends_at=trial_end)
+    except (KeyError, IndexError):
+        pass
     # Re-fetch so email_verified is set
     updated = get_user_by_id(row["id"])
     user = User(updated)
     login_user(user)
     return redirect(url_for("dashboard"))
+
+
+_RESEND_MSG = "If an account with that email exists, we sent a new verification link."
+
+
+@app.route("/verify/resend", methods=["POST"])
+@limiter.limit("3/hour")
+def resend_verification():
+    """Resend verification email. Rate limited to 3/hour."""
+    email = (request.form.get("email") or "").strip().lower()
+    if not email:
+        return render_template_string(CHECK_EMAIL_HTML, email="", info=_RESEND_MSG)
+
+    row = get_user_by_email(email)
+    if row and not row["email_verified"]:
+        new_token = secrets.token_urlsafe(32)
+        update_verify_token(row["id"], new_token)
+        _send_verification_email(email, new_token)
+
+    # Always show generic message to prevent email enumeration
+    return render_template_string(CHECK_EMAIL_HTML, email=email, info=_RESEND_MSG)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -2024,12 +2112,16 @@ def _cancel_subscription(stripe_customer_id: str):
 @login_required
 @verified_required
 def route_api_billing():
-    """Return billing status for the current user (used by dashboard JS)."""
+    """Return billing status and request URL for the current user."""
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+    slug = current_user.request_slug
+    request_url = f"{app_url}/request/{slug}" if slug else None
     return jsonify({
         "stripe_enabled": _STRIPE_ENABLED,
         "subscription_status": current_user.subscription_status,
         "trial_days_remaining": current_user.trial_days_remaining,
         "has_active_subscription": current_user.has_active_subscription,
+        "request_url": request_url,
     })
 
 
