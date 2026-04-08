@@ -11,7 +11,7 @@
 <style>
   :root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2a2d3a;--text:#e8eaf0;--muted:#6b7280;--accent:#6366f1;--accent-h:#4f52d1;--green:#22c55e;--yellow:#f59e0b;--red:#ef4444;}
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;
+  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:16px;line-height:1.5;
        padding-bottom:max(72px,calc(60px + env(safe-area-inset-bottom)));}
   header{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;
          position:sticky;top:0;background:var(--bg);z-index:100;}
@@ -20,23 +20,22 @@
   .header-email{font-size:11px;color:var(--muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:6px 12px;
        border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);
-       cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s;min-height:36px;}
+       cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s;min-height:44px;}
   .btn:hover{border-color:var(--accent);color:var(--accent);}
   .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
   .btn-primary:hover{background:var(--accent-h);border-color:var(--accent-h);color:#fff;}
-  .btn-sm{padding:3px 8px;font-size:11px;min-height:28px;}
+  .btn-sm{padding:3px 8px;font-size:11px;min-height:44px;}
   .btn-danger{color:var(--red)!important;}
   .btn-danger:hover{border-color:var(--red)!important;}
   .btn-add{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;
            padding:6px 12px;font-size:13px;border-radius:8px;white-space:nowrap;min-height:36px;
            display:inline-flex;align-items:center;cursor:pointer;font-family:inherit;border:none;}
-  .stats-bar{display:flex;gap:8px;padding:12px 16px;overflow-x:auto;scrollbar-width:none;
+  .stats-bar{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px;
              border-bottom:1px solid var(--border);}
-  .stats-bar::-webkit-scrollbar{display:none;}
   .stat-pill{display:flex;flex-direction:column;align-items:center;gap:2px;
              background:var(--surface);border:1px solid var(--border);border-radius:20px;
-             padding:6px 14px;white-space:nowrap;flex-shrink:0;}
-  .stat-val{font-size:15px;font-weight:700;}
+             padding:8px 14px;white-space:nowrap;flex:1 0 calc(50% - 4px);min-width:0;}
+  .stat-val{font-size:18px;font-weight:700;}
   .stat-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
   .green{color:var(--green);}.yellow{color:var(--yellow);}.red{color:var(--red);}.accent{color:var(--accent);}
   .bottom-nav{position:fixed;bottom:0;left:0;right:0;height:60px;background:var(--surface);
@@ -141,12 +140,17 @@
   .reminder-btns{display:flex;gap:8px;flex-wrap:wrap;}
   .reminder-btns .btn{flex:1;min-width:0;min-height:44px;}
   .btn-dismiss{color:var(--muted)!important;font-size:12px;min-height:40px!important;padding:6px 12px!important;}
-  .usage-table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;}
+  .usage-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .usage-table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;min-width:320px;}
   .usage-table th{text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);border-bottom:1px solid var(--border);}
   .usage-table td{padding:10px;border-bottom:1px solid var(--border);}
   .usage-table tr:last-child td{border-bottom:none;}
+  .contact-link{color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:4px;}
+  .contact-link:hover{text-decoration:underline;}
+  .lead-contact{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:4px;}
+  .lead-contact a{min-height:44px;display:inline-flex;align-items:center;padding:4px 0;}
   @media(min-width:768px){
-    body{padding-bottom:0;}
+    body{padding-bottom:0;font-size:14px;}
     header{padding:14px 24px;}
     header h1{font-size:18px;}
     .header-email{max-width:none;}
@@ -156,8 +160,11 @@
               border-radius:0;height:44px;}
     .nav-icon{font-size:16px;}
     .nav-item.active{border-bottom:2px solid var(--accent);color:var(--accent);}
-    .stats-bar{padding:16px 24px;gap:12px;}
-    .stat-pill{padding:8px 18px;}
+    .stats-bar{padding:16px 24px;gap:12px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;}
+    .stats-bar::-webkit-scrollbar{display:none;}
+    .stat-pill{padding:8px 18px;flex:0 0 auto;min-width:auto;}
+    .stat-val{font-size:15px;}
+    .btn-sm{min-height:28px;}
     .main{max-width:1140px;margin:0 auto;}
     .tab-panel{padding:24px;}
     .lead-primary-btn{display:none;}
@@ -535,7 +542,10 @@ function switchTab(name){
 function renderLead(l,opts){
   opts=opts||{};
   const showActions=opts.showActions!==false;
-  const contact=[l.phone,l.email].filter(Boolean).join(' \u00b7 ');
+  const contactParts=[];
+  if(l.phone)contactParts.push('<a href="tel:'+esc(l.phone)+'" class="contact-link">📞 '+esc(l.phone)+'</a>');
+  if(l.email)contactParts.push('<a href="mailto:'+esc(l.email)+'" class="contact-link">✉ '+esc(l.email)+'</a>');
+  const contactHtml=contactParts.length?'<div class="lead-contact">'+contactParts.join('')+'</div>':'';
 
   let alertHtml='';
   if(l.status==='followup_due')alertHtml='<div class="lead-alert">🔔 Follow-up Due</div>';
@@ -616,7 +626,8 @@ function renderLead(l,opts){
   return '<div class="lead" data-id="'+l.id+'" data-status="'+l.status+'">'
     +'<div class="lead-card-body">'
     +'<div class="lead-header"><div>'+alertHtml+'<div class="lead-name">'+esc(l.name)+sourceBadge+'</div></div>'+badge(l.status)+'</div>'
-    +'<div class="lead-sub">'+esc(l.service||'')+(contact?' \u00b7 '+esc(contact):'')+'</div>'
+    +'<div class="lead-sub">'+esc(l.service||'')+'</div>'
+    +contactHtml
     +notesHtml
     +metaRow
     +primaryBtn
@@ -781,7 +792,7 @@ function renderRemSection(containerId,leads,buttons,emptyMsg,dismissType){
     return '<div class="reminder-card" data-id="'+l.id+'" data-status="'+l.status+'">'
       +'<div class="reminder-card-header"><div>'
       +'<div class="reminder-card-name">'+esc(l.name)+'</div>'
-      +'<div class="reminder-card-sub">'+esc(l.service||'')+(l.phone?' \u00b7 '+esc(l.phone):'')+'</div>'
+      +'<div class="reminder-card-sub">'+esc(l.service||'')+(l.phone?' \u00b7 <a href="tel:'+esc(l.phone)+'" class="contact-link">'+esc(l.phone)+'</a>':'')+'</div>'
       +'</div>'+badge(l.status)+'</div>'
       +metaHtml
       +'<div class="reminder-btns">'+btns+dismissBtn+'</div>'
@@ -807,11 +818,11 @@ async function loadUsage(){
     const l30Map={};last30.forEach(function(r){l30Map[r.event_type]=r.count;});
     const typeArr=[...new Set([...alltime.map(function(r){return r.event_type;}),...last30.map(function(r){return r.event_type;})])].sort();
     if(!typeArr.length){el.innerHTML='<div class="empty">No events yet.</div>';return;}
-    let html='<table class="usage-table"><thead><tr><th>Event</th><th>Last 30 Days</th><th>All Time</th></tr></thead><tbody>';
+    let html='<div class="usage-table-wrap"><table class="usage-table"><thead><tr><th>Event</th><th>Last 30 Days</th><th>All Time</th></tr></thead><tbody>';
     typeArr.forEach(function(t){
       html+='<tr><td>'+esc(t.replace(/_/g,' '))+'</td><td>'+(l30Map[t]||0)+'</td><td>'+(atMap[t]||0)+'</td></tr>';
     });
-    html+='</tbody></table>';
+    html+='</tbody></table></div>';
     el.innerHTML=html;
   }catch(e){el.innerHTML='<div class="empty">Error loading usage.</div>';}
 }
@@ -1286,8 +1297,8 @@ function renderRequestCard(r){
   const fields=[];
   if(r.service)fields.push(['Service',esc(r.service)]);
   if(r.service_address)fields.push(['Address',esc(r.service_address)]);
-  if(r.phone)fields.push(['Phone',esc(r.phone)]);
-  if(r.email)fields.push(['Email',esc(r.email)]);
+  if(r.phone)fields.push(['Phone','<a href="tel:'+esc(r.phone)+'" class="contact-link">'+esc(r.phone)+'</a>']);
+  if(r.email)fields.push(['Email','<a href="mailto:'+esc(r.email)+'" class="contact-link">'+esc(r.email)+'</a>']);
   if(r.requested_date)fields.push(['Pref. Date',esc(r.requested_date)]);
   if(r.requested_time_window)fields.push(['Pref. Time',esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)]);
   if(r.notes)fields.push(['Notes',esc(r.notes)]);
@@ -1369,8 +1380,8 @@ function renderRequestCard(r){
   const fields=[];
   if(r.service)fields.push(['Service',esc(r.service)]);
   if(r.service_address)fields.push(['Address',esc(r.service_address)]);
-  if(r.phone)fields.push(['Phone',esc(r.phone)]);
-  if(r.email)fields.push(['Email',esc(r.email)]);
+  if(r.phone)fields.push(['Phone','<a href="tel:'+esc(r.phone)+'" class="contact-link">'+esc(r.phone)+'</a>']);
+  if(r.email)fields.push(['Email','<a href="mailto:'+esc(r.email)+'" class="contact-link">'+esc(r.email)+'</a>']);
   if(r.requested_date)fields.push(['Pref. Date',esc(r.requested_date)]);
   if(r.requested_time_window)fields.push(['Pref. Time',esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)]);
   if(r.notes)fields.push(['Notes',esc(r.notes)]);

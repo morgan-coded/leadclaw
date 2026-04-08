@@ -5,12 +5,13 @@ Entry point:
     leadclaw-web        # uses env vars PORT (default 7432), HOST (default 127.0.0.1)
 
 Auth flow:
-    POST /signup  → create account, send verification email (or print link in dev)
-    GET  /verify/<token>  → mark email verified, log in, redirect to /
-    POST /login   → check password + email_verified, create session
+    POST /signup  → create account (bcrypt-hashed password), auto-verify, log in immediately
+    POST /login   → check password, create flask-login session
     GET  /logout  → clear session
+    GET  /verify/<token>  → (placeholder route for future email verification)
 
-All dashboard routes require @login_required AND email_verified.
+All dashboard routes require @login_required AND @verified_required.
+Signup currently auto-verifies, so new users get immediate dashboard access.
 
 Environment variables:
     LEADCLAW_SECRET_KEY  - Flask secret key (required for prod; fallback prints warning)
@@ -203,12 +204,16 @@ def _valid_date(val: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Email verification helpers
+# Email verification helpers (currently unused — signup auto-verifies)
 # ---------------------------------------------------------------------------
 
 
 def _send_verification_email(to_email: str, token: str):
-    """Send verification email via Resend API, SMTP, or print link in dev."""
+    """Send verification email via Resend API, SMTP, or print link in dev.
+
+    Not called during normal signup (auto-verify is enabled). Retained for
+    future use when email verification is re-enabled.
+    """
     app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
     link = f"{app_url}/verify/{token}"
 
@@ -350,6 +355,7 @@ SIGNUP_HTML = (
     "</div></body></html>"
 )
 
+# Not shown during normal signup (auto-verify skips this). Retained for future use.
 CHECK_EMAIL_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -364,6 +370,7 @@ CHECK_EMAIL_HTML = (
     "</div></body></html>"
 )
 
+# Shown only if a user's email_verified flag is manually unset. Not reachable via normal signup.
 UNVERIFIED_HTML = (
     "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -837,7 +844,7 @@ def signup():
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     token = secrets.token_urlsafe(32)
     uid = create_user(email, pw_hash, token)
-    # Auto-verify on signup (email delivery blocked on shared IPs; re-enable later)
+    # Auto-verify: skip email verification, grant immediate access
     verify_user_email(uid)
     row = get_user_by_id(uid)
     login_user(User(row))
