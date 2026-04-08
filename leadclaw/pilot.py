@@ -267,6 +267,18 @@ def update_candidate(cid: int, user_id: Optional[int] = None, **fields):
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+
+    # Recalculate score when scoring-relevant fields change
+    score_fields = {"service_type", "phone", "email"}
+    if score_fields & updates.keys():
+        candidate = get_candidate_by_id(cid, user_id=user_id)
+        if candidate:
+            svc = updates.get("service_type", candidate["service_type"])
+            phone = updates.get("phone", candidate["phone"])
+            email = updates.get("email", candidate["email"])
+            source = candidate["source"] or "manual_entry"
+            updates["score"] = score_candidate(svc, has_phone=bool(phone), has_email=bool(email), source=source)
+
     updates["last_updated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     where = "WHERE id = ? AND user_id = ?" if user_id is not None else "WHERE id = ?"

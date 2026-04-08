@@ -1557,21 +1557,28 @@ def route_edit_lead(lead_id):
 
     body = request.get_json(silent=True) or {}
     fields = {}
+    nullable_fields = {"phone", "email", "notes", "follow_up_after"}
     for field in ("name", "service", "phone", "email", "notes", "follow_up_after"):
-        val = body.get(field)
-        if val is not None:
-            val = str(val).strip() or None
-            if val is None:
-                continue
-            if field == "name" and len(val) > MAX_NAME_LENGTH:
-                return jsonify({"error": f"name max {MAX_NAME_LENGTH} chars"}), 400
-            if field not in ("name",) and len(val) > MAX_FIELD_LENGTH:
-                return jsonify({"error": f"{field} max {MAX_FIELD_LENGTH} chars"}), 400
-            if field == "email" and not _valid_email(val):
-                return jsonify({"error": "invalid email format"}), 400
-            if field == "follow_up_after" and not _valid_date(val):
-                return jsonify({"error": "follow_up_after must be YYYY-MM-DD"}), 400
-            fields[field] = val
+        if field not in body:
+            continue
+        raw = body[field]
+        val = str(raw).strip() if raw is not None else None
+        # Treat empty string as null
+        if val == "":
+            val = None
+        if val is None:
+            if field in nullable_fields:
+                fields[field] = None
+            continue
+        if field == "name" and len(val) > MAX_NAME_LENGTH:
+            return jsonify({"error": f"name max {MAX_NAME_LENGTH} chars"}), 400
+        if field not in ("name",) and len(val) > MAX_FIELD_LENGTH:
+            return jsonify({"error": f"{field} max {MAX_FIELD_LENGTH} chars"}), 400
+        if field == "email" and not _valid_email(val):
+            return jsonify({"error": "invalid email format"}), 400
+        if field == "follow_up_after" and not _valid_date(val):
+            return jsonify({"error": "follow_up_after must be YYYY-MM-DD"}), 400
+        fields[field] = val
     update_lead(lead_id, user_id=current_user.id, **fields)
     return jsonify({"ok": True})
 

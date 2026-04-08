@@ -579,9 +579,12 @@ def mark_lost(
 def import_leads_from_rows(rows: list) -> dict:
     """
     Bulk-insert leads from a list of dicts (pre-validated CSV rows).
-    Supports: name, service, phone, email, notes, followup_days, quote_amount.
+    Supports: name, service, phone, email, notes, followup_days, quote_amount,
+    actual_amount, follow_up_after, lost_reason, status.
     Returns {imported, skipped, errors} summary.
     """
+    from leadclaw.config import LOST_REASONS
+
     imported = 0
     skipped = 0
     errors = []
@@ -611,12 +614,46 @@ def import_leads_from_rows(rows: list) -> dict:
                     quote_amount = None
             except (ValueError, TypeError):
                 pass  # ignore unparseable quote amounts
+        actual_amount = None
+        raw_actual = (row.get("actual_amount") or "").strip()
+        if raw_actual:
+            try:
+                actual_amount = float(raw_actual)
+                if actual_amount < 0:
+                    actual_amount = None
+            except (ValueError, TypeError):
+                pass
+        follow_up_after = (row.get("follow_up_after") or "").strip() or None
+        if follow_up_after:
+            # Validate YYYY-MM-DD format (accept datetime strings, take date part)
+            follow_up_after = follow_up_after[:10]
+            try:
+                datetime.strptime(follow_up_after, "%Y-%m-%d")
+            except ValueError:
+                follow_up_after = None
+        lost_reason = (row.get("lost_reason") or "").strip() or None
+        if lost_reason and lost_reason not in LOST_REASONS:
+            lost_reason = None
+        status = (row.get("status") or "").strip() or None
         try:
             lead_id, _ = add_lead(
                 name, service, phone=phone, email=email, notes=notes, followup_days=followup_days
             )
             if quote_amount is not None:
                 update_quote(lead_id, quote_amount, followup_days=followup_days)
+            if actual_amount is not None:
+                mark_paid(lead_id, actual_amount=actual_amount)
+            elif status == "paid":
+                mark_paid(lead_id)
+            elif status == "won":
+                mark_won(lead_id)
+            elif status == "completed":
+                mark_completed(lead_id)
+            elif status == "lost" and lost_reason:
+                mark_lost(lead_id, lost_reason)
+            # Apply follow_up_after override (after status changes which may reset it)
+            if follow_up_after:
+                update_lead(lead_id, follow_up_after=follow_up_after)
             imported += 1
         except Exception as e:  # noqa: BLE001
             errors.append(f"Row {i + 1} ({name}): {e}")
