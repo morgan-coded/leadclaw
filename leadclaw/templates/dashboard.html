@@ -145,10 +145,13 @@
   .usage-table th{text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);border-bottom:1px solid var(--border);}
   .usage-table td{padding:10px;border-bottom:1px solid var(--border);}
   .usage-table tr:last-child td{border-bottom:none;}
-  .contact-link{color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:4px;}
-  .contact-link:hover{text-decoration:underline;}
-  .lead-contact{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:4px;}
-  .lead-contact a{min-height:44px;display:inline-flex;align-items:center;padding:4px 0;}
+  .action-bar{display:flex;gap:6px;margin-bottom:8px;}
+  .action-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;
+              min-height:44px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);
+              background:var(--surface2);color:var(--text);text-decoration:none;
+              font-size:13px;font-weight:500;font-family:inherit;flex:1;white-space:nowrap;cursor:pointer;transition:border-color .15s;}
+  .action-btn:hover{border-color:var(--accent);}
+  .action-btn-icon{font-size:15px;line-height:1;}
   @media(min-width:768px){
     body{padding-bottom:0;font-size:14px;}
     header{padding:14px 24px;}
@@ -165,6 +168,7 @@
     .stat-pill{padding:8px 18px;flex:0 0 auto;min-width:auto;}
     .stat-val{font-size:15px;}
     .btn-sm{min-height:28px;}
+    .action-btn{flex:none;font-size:12px;padding:4px 10px;min-height:36px;}
     .main{max-width:1140px;margin:0 auto;}
     .tab-panel{padding:24px;}
     .lead-primary-btn{display:none;}
@@ -542,10 +546,13 @@ function switchTab(name){
 function renderLead(l,opts){
   opts=opts||{};
   const showActions=opts.showActions!==false;
-  const contactParts=[];
-  if(l.phone)contactParts.push('<a href="tel:'+esc(l.phone)+'" class="contact-link">📞 '+esc(l.phone)+'</a>');
-  if(l.email)contactParts.push('<a href="mailto:'+esc(l.email)+'" class="contact-link">✉ '+esc(l.email)+'</a>');
-  const contactHtml=contactParts.length?'<div class="lead-contact">'+contactParts.join('')+'</div>':'';
+  const actionBtns=[];
+  if(l.phone){
+    actionBtns.push('<a href="tel:'+esc(l.phone)+'" class="action-btn"><span class="action-btn-icon">📞</span> Call</a>');
+    actionBtns.push('<a href="sms:'+esc(l.phone)+'" class="action-btn"><span class="action-btn-icon">💬</span> Text</a>');
+  }
+  if(l.email)actionBtns.push('<a href="mailto:'+esc(l.email)+'" class="action-btn"><span class="action-btn-icon">✉️</span> Email</a>');
+  const actionBar=actionBtns.length?'<div class="action-bar">'+actionBtns.join('')+'</div>':'';
 
   let alertHtml='';
   if(l.status==='followup_due')alertHtml='<div class="lead-alert">🔔 Follow-up Due</div>';
@@ -627,7 +634,7 @@ function renderLead(l,opts){
     +'<div class="lead-card-body">'
     +'<div class="lead-header"><div>'+alertHtml+'<div class="lead-name">'+esc(l.name)+sourceBadge+'</div></div>'+badge(l.status)+'</div>'
     +'<div class="lead-sub">'+esc(l.service||'')+'</div>'
-    +contactHtml
+    +actionBar
     +notesHtml
     +metaRow
     +primaryBtn
@@ -785,6 +792,13 @@ function renderRemSection(containerId,leads,buttons,emptyMsg,dismissType){
     const dismissBtn=dismissType
       ?'<button class="btn btn-sm btn-dismiss" onclick="dismissReminder('+l.id+',\''+dismissType+'\',this)">Dismiss</button>'
       :'';
+    const remActions=[];
+    if(l.phone){
+      remActions.push('<a href="tel:'+esc(l.phone)+'" class="action-btn"><span class="action-btn-icon">📞</span> Call</a>');
+      remActions.push('<a href="sms:'+esc(l.phone)+'" class="action-btn"><span class="action-btn-icon">💬</span> Text</a>');
+    }
+    if(l.email)remActions.push('<a href="mailto:'+esc(l.email)+'" class="action-btn"><span class="action-btn-icon">✉️</span> Email</a>');
+    const remActionBar=remActions.length?'<div class="action-bar">'+remActions.join('')+'</div>':'';
     const metaParts=[];
     if(l.scheduled_date)metaParts.push('Scheduled: '+l.scheduled_date);
     if(l.next_service_due_at)metaParts.push('Next svc: '+l.next_service_due_at);
@@ -792,8 +806,9 @@ function renderRemSection(containerId,leads,buttons,emptyMsg,dismissType){
     return '<div class="reminder-card" data-id="'+l.id+'" data-status="'+l.status+'">'
       +'<div class="reminder-card-header"><div>'
       +'<div class="reminder-card-name">'+esc(l.name)+'</div>'
-      +'<div class="reminder-card-sub">'+esc(l.service||'')+(l.phone?' \u00b7 <a href="tel:'+esc(l.phone)+'" class="contact-link">'+esc(l.phone)+'</a>':'')+'</div>'
+      +'<div class="reminder-card-sub">'+esc(l.service||'')+'</div>'
       +'</div>'+badge(l.status)+'</div>'
+      +remActionBar
       +metaHtml
       +'<div class="reminder-btns">'+btns+dismissBtn+'</div>'
       +'</div>';
@@ -1297,12 +1312,17 @@ function renderRequestCard(r){
   const fields=[];
   if(r.service)fields.push(['Service',esc(r.service)]);
   if(r.service_address)fields.push(['Address',esc(r.service_address)]);
-  if(r.phone)fields.push(['Phone','<a href="tel:'+esc(r.phone)+'" class="contact-link">'+esc(r.phone)+'</a>']);
-  if(r.email)fields.push(['Email','<a href="mailto:'+esc(r.email)+'" class="contact-link">'+esc(r.email)+'</a>']);
   if(r.requested_date)fields.push(['Pref. Date',esc(r.requested_date)]);
   if(r.requested_time_window)fields.push(['Pref. Time',esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)]);
   if(r.notes)fields.push(['Notes',esc(r.notes)]);
   if(r.scheduled_date)fields.push(['Booked Date',esc(r.scheduled_date)+(r.scheduled_time_window&&r.scheduled_time_window!=='flexible'?' · '+(TW_LABELS[r.scheduled_time_window]||r.scheduled_time_window):'')]);
+  const reqQA=[];
+  if(r.phone){
+    reqQA.push('<a href="tel:'+esc(r.phone)+'" class="action-btn"><span class="action-btn-icon">📞</span> Call</a>');
+    reqQA.push('<a href="sms:'+esc(r.phone)+'" class="action-btn"><span class="action-btn-icon">💬</span> Text</a>');
+  }
+  if(r.email)reqQA.push('<a href="mailto:'+esc(r.email)+'" class="action-btn"><span class="action-btn-icon">✉️</span> Email</a>');
+  const reqActionBar=reqQA.length?'<div class="action-bar">'+reqQA.join('')+'</div>':'';
   const created=r.created_at?r.created_at.slice(0,10):'';
 
   const rj=esc(JSON.stringify(r));
@@ -1317,11 +1337,12 @@ function renderRequestCard(r){
 
   const headerBadge=isBooked?badge(r.status):'<span class="badge badge-request">Request</span>';
 
-  return '<div class="req-card'+cls+'" data-id="'+r.id+'" data-status="'+r.status+'">'   
+  return '<div class="req-card'+cls+'" data-id="'+r.id+'" data-status="'+r.status+'">'
     +'<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">'
     +'<div><div style="font-size:17px;font-weight:600">'+esc(r.name)+'</div>'
     +(created?'<div style="font-size:11px;color:var(--muted)">Submitted '+created+'</div>':'')
     +'</div>'+headerBadge+'</div>'
+    +reqActionBar
     +fields.map(function(f){return '<div class="req-field"><span class="req-field-label">'+f[0]+'</span><span class="req-field-val">'+f[1]+'</span></div>';}).join('')
     +'<div class="req-actions">'+actions+'</div>'
     +'</div>';
@@ -1380,12 +1401,17 @@ function renderRequestCard(r){
   const fields=[];
   if(r.service)fields.push(['Service',esc(r.service)]);
   if(r.service_address)fields.push(['Address',esc(r.service_address)]);
-  if(r.phone)fields.push(['Phone','<a href="tel:'+esc(r.phone)+'" class="contact-link">'+esc(r.phone)+'</a>']);
-  if(r.email)fields.push(['Email','<a href="mailto:'+esc(r.email)+'" class="contact-link">'+esc(r.email)+'</a>']);
   if(r.requested_date)fields.push(['Pref. Date',esc(r.requested_date)]);
   if(r.requested_time_window)fields.push(['Pref. Time',esc(TW_LABELS[r.requested_time_window]||r.requested_time_window)]);
   if(r.notes)fields.push(['Notes',esc(r.notes)]);
   if(r.scheduled_date)fields.push(['Booked Date',esc(r.scheduled_date)+(r.scheduled_time_window&&r.scheduled_time_window!=='flexible'?' \u00b7 '+(TW_LABELS[r.scheduled_time_window]||r.scheduled_time_window):'')]);
+  const rqa2=[];
+  if(r.phone){
+    rqa2.push('<a href="tel:'+esc(r.phone)+'" class="action-btn"><span class="action-btn-icon">📞</span> Call</a>');
+    rqa2.push('<a href="sms:'+esc(r.phone)+'" class="action-btn"><span class="action-btn-icon">💬</span> Text</a>');
+  }
+  if(r.email)rqa2.push('<a href="mailto:'+esc(r.email)+'" class="action-btn"><span class="action-btn-icon">✉️</span> Email</a>');
+  const rqa2Bar=rqa2.length?'<div class="action-bar">'+rqa2.join('')+'</div>':'';
   const created=r.created_at?r.created_at.slice(0,10):'';
 
   const rj=esc(JSON.stringify(r));
@@ -1406,6 +1432,7 @@ function renderRequestCard(r){
     +'<div><div style="font-size:17px;font-weight:600">'+esc(r.name)+newBadge+'</div>'
     +(created?'<div style="font-size:11px;color:var(--muted)">Submitted '+created+'</div>':'')
     +'</div>'+headerBadge+'</div>'
+    +rqa2Bar
     +fields.map(function(f){return '<div class="req-field"><span class="req-field-label">'+f[0]+'</span><span class="req-field-val">'+f[1]+'</span></div>';}).join('')
     +'<div class="req-actions">'+actions+'</div>'
     +'</div>';
