@@ -386,9 +386,8 @@ def test_request_overlong_phone_rejected():
     from leadclaw.web import app
 
     client = app.test_client()
-    r = _request_post(client, phone="5" * 21)
-    assert r.status_code == 422
-    assert b"Phone" in r.data or b"phone" in r.data.lower()
+    r = _request_post(client, phone="5" * 31)
+    assert r.status_code == 400
 
 
 def test_request_overlong_service_address_rejected():
@@ -402,13 +401,11 @@ def test_request_overlong_service_address_rejected():
 
 
 def test_request_overlong_notes_rejected():
-    from leadclaw.config import MAX_FIELD_LENGTH
     from leadclaw.web import app
 
     client = app.test_client()
-    r = _request_post(client, notes="N" * (MAX_FIELD_LENGTH + 1))
-    assert r.status_code == 422
-    assert b"Notes" in r.data or b"notes" in r.data.lower()
+    r = _request_post(client, notes="N" * 2001)
+    assert r.status_code == 400
 
 
 def test_request_valid_lengths_accepted():

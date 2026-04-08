@@ -37,7 +37,6 @@ import secrets
 import smtplib
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime
 from email.mime.text import MIMEText
 
@@ -50,6 +49,8 @@ from flask import (
     request,
     url_for,
 )
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -124,23 +125,7 @@ def _notify_from_email() -> str:
 # In-memory only — resets on restart. Good enough for low-volume pilot use.
 # ---------------------------------------------------------------------------
 
-_REQUEST_THROTTLE: dict = defaultdict(list)  # ip -> [timestamp, ...]
-_REQUEST_THROTTLE_LIMIT = 5  # max submissions per window
-_REQUEST_THROTTLE_WINDOW = 3600  # 1 hour in seconds
 _REQUEST_MIN_SECONDS = 3  # minimum seconds to fill out the form
-
-
-def _is_throttled(ip: str) -> bool:
-    """Return True if this IP has exceeded the rate limit."""
-    now = time.time()
-    cutoff = now - _REQUEST_THROTTLE_WINDOW
-    _REQUEST_THROTTLE[ip] = [t for t in _REQUEST_THROTTLE[ip] if t > cutoff]
-    return len(_REQUEST_THROTTLE[ip]) >= _REQUEST_THROTTLE_LIMIT
-
-
-def _record_submission(ip: str):
-    """Record a successful submission for this IP."""
-    _REQUEST_THROTTLE[ip].append(time.time())
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +149,14 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
+
+limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
+
+
+@app.errorhandler(429)
+def _ratelimit_handler(e):
+    return jsonify(error="Too many requests. Try again later."), 429
+
 
 # Initialize DB at import time so gunicorn workers have schema ready
 with app.app_context():
@@ -470,7 +463,7 @@ _REQUEST_FORM_HTML = (
     ") }}'>"
     # Honeypot: hidden from real users, bots fill it in
     "<div style='display:none' aria-hidden='true'><label>Website</label>"
-    "<input type='text' name='_hp_website' autocomplete='off' tabindex='-1'></div>"
+    "<input type='text' name='website' autocomplete='off' tabindex='-1'></div>"
     "<button class='btn' type='submit'>Submit Request</button>"
     "</form>"
     "</div></body></html>"
@@ -661,6 +654,7 @@ def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
 
 
 @app.route("/request", methods=["GET", "POST"])
+@limiter.limit("10/hour", methods=["POST"])
 def public_request():
     """Public service request form. No auth required. Creates a lead on submit."""
     if request.method == "GET":
@@ -675,7 +669,7 @@ def public_request():
 
     # --- Anti-spam checks ---
     # 1. Honeypot: if the hidden field is filled, silently discard
-    if request.form.get("_hp_website", ""):
+    if request.form.get("website", ""):
         return render_template_string(_REQUEST_SUCCESS_HTML, name="there", avail_warning=None)
 
     # 2. Minimum time check
@@ -692,18 +686,7 @@ def public_request():
     except (ValueError, TypeError):
         pass
 
-    # 3. Per-IP rate limit
-    client_ip = (
-        request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
-    )
-    if _is_throttled(client_ip):
-        return render_template_string(
-            _REQUEST_FORM_HTML,
-            error="Too many requests. Please try again later.",
-            services=_REQUEST_SERVICES,
-            time_windows=_REQUEST_TIME_WINDOWS,
-        ), 429
-
+    # 3. Strip all text inputs
     name = (request.form.get("name") or "").strip()
     phone = (request.form.get("phone") or "").strip()
     email = (request.form.get("email") or "").strip() or None
@@ -713,7 +696,25 @@ def public_request():
     requested_time_window = (request.form.get("requested_time_window") or "").strip() or None
     notes = (request.form.get("notes") or "").strip() or None
 
-    _MAX_PHONE = 20
+    # 4. Reject <script injection attempts
+    _all_text = " ".join(
+        v for v in (name, phone, email, service, service_address, requested_date, notes) if v
+    )
+    if "<script" in _all_text.lower():
+        return jsonify(error="Input too long."), 400
+
+    # 5. Hard length caps — reject before any further processing
+    _LENGTH_CAPS = {
+        "name": (name, 200),
+        "email": (email, 254),
+        "phone": (phone, 30),
+        "service": (service, 200),
+        "notes": (notes, 2000),
+        "requested_date": (requested_date, 30),
+    }
+    for _field, (_val, _max) in _LENGTH_CAPS.items():
+        if _val and len(_val) > _max:
+            return jsonify(error="Input too long."), 400
 
     errors = []
     if not name:
@@ -722,16 +723,16 @@ def public_request():
         errors.append(f"Name must be {MAX_NAME_LENGTH} characters or fewer.")
     if not phone:
         errors.append("Phone number is required.")
-    elif len(phone) > _MAX_PHONE:
-        errors.append(f"Phone number must be {_MAX_PHONE} characters or fewer.")
+    elif len(phone) > 30:
+        errors.append("Phone number must be 30 characters or fewer.")
     if not service or service not in _REQUEST_SERVICES:
         errors.append("Please select a valid service.")
     if not service_address:
         errors.append("Service address is required.")
     elif len(service_address) > MAX_FIELD_LENGTH:
         errors.append(f"Service address must be {MAX_FIELD_LENGTH} characters or fewer.")
-    if notes and len(notes) > MAX_FIELD_LENGTH:
-        errors.append(f"Notes must be {MAX_FIELD_LENGTH} characters or fewer.")
+    if notes and len(notes) > 2000:
+        errors.append("Notes must be 2000 characters or fewer.")
     if email and not _valid_email(email):
         errors.append("Enter a valid email address.")
     if requested_date and not _valid_date(requested_date):
@@ -797,9 +798,6 @@ def public_request():
             "notes": notes,
         }
     )
-
-    # Record submission for rate-limit tracking
-    _record_submission(client_ip)
 
     return render_template_string(_REQUEST_SUCCESS_HTML, name=name, avail_warning=avail_warning)
 
