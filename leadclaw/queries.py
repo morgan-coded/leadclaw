@@ -213,7 +213,7 @@ def get_closed_summary(user_id: Optional[int] = None):
             SELECT
                 CASE WHEN status = 'won' THEN 'paid' ELSE status END as status,
                 COUNT(*) as count,
-                COALESCE(SUM(quote_amount), 0) as total
+                COALESCE(SUM(COALESCE(actual_amount, quote_amount)), 0) as total
             FROM leads WHERE status IN ('won', 'lost', 'paid') {uid_clause}
             GROUP BY CASE WHEN status = 'won' THEN 'paid' ELSE status END
             """,
@@ -253,6 +253,90 @@ def get_closed_leads(user_id: Optional[int] = None):
                 """
             ).fetchall()
     return rows
+
+
+def get_report_stats(user_id: int, start_date: str, end_date: str) -> dict:
+    """Return reporting stats for a date range scoped to a user.
+
+    Returns: {jobs_completed, revenue_closed, leads_created, conversion_rate}
+    """
+    with get_conn() as conn:
+        jobs = conn.execute(
+            """
+            SELECT COUNT(*) as cnt,
+                   COALESCE(SUM(COALESCE(actual_amount, quote_amount)), 0) as revenue
+            FROM leads
+            WHERE user_id = ?
+              AND status IN ('paid', 'won', 'completed')
+              AND created_at >= ? AND created_at < ?
+            """,
+            (user_id, start_date, end_date),
+        ).fetchone()
+        total = conn.execute(
+            """
+            SELECT COUNT(*) as cnt FROM leads
+            WHERE user_id = ? AND created_at >= ? AND created_at < ?
+            """,
+            (user_id, start_date, end_date),
+        ).fetchone()
+    jobs_completed = jobs["cnt"]
+    revenue = jobs["revenue"]
+    leads_created = total["cnt"]
+    conversion_rate = round(jobs_completed / leads_created * 100, 1) if leads_created > 0 else 0.0
+    return {
+        "jobs_completed": jobs_completed,
+        "revenue_closed": round(revenue, 2),
+        "leads_created": leads_created,
+        "conversion_rate": conversion_rate,
+    }
+
+
+def get_report_stats_all_time(user_id: int) -> dict:
+    """Return all-time reporting stats for a user, including average deal size."""
+    with get_conn() as conn:
+        jobs = conn.execute(
+            """
+            SELECT COUNT(*) as cnt,
+                   COALESCE(SUM(COALESCE(actual_amount, quote_amount)), 0) as revenue
+            FROM leads
+            WHERE user_id = ? AND status IN ('paid', 'won', 'completed')
+            """,
+            (user_id,),
+        ).fetchone()
+        total = conn.execute(
+            "SELECT COUNT(*) as cnt FROM leads WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    jobs_completed = jobs["cnt"]
+    revenue = jobs["revenue"]
+    leads_created = total["cnt"]
+    conversion_rate = round(jobs_completed / leads_created * 100, 1) if leads_created > 0 else 0.0
+    average_deal_size = round(revenue / jobs_completed, 2) if jobs_completed > 0 else 0.0
+    return {
+        "jobs_completed": jobs_completed,
+        "revenue_closed": round(revenue, 2),
+        "leads_created": leads_created,
+        "conversion_rate": conversion_rate,
+        "average_deal_size": average_deal_size,
+    }
+
+
+def get_overdue_followups(user_id: int) -> list:
+    """Return leads with overdue follow_up_after for a specific user.
+
+    Excludes leads with status in (paid, completed, lost, won).
+    """
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT * FROM leads
+            WHERE user_id = ?
+              AND follow_up_after <= date('now')
+              AND status NOT IN ('paid', 'completed', 'lost', 'won')
+            ORDER BY follow_up_after ASC
+            """,
+            (user_id,),
+        ).fetchall()
 
 
 # ---------------------------------------------------------------------------
@@ -668,6 +752,7 @@ def mark_invoice_sent(
 def mark_paid(
     lead_id: int,
     recurring_days: Optional[int] = None,
+    actual_amount: Optional[float] = None,
     user_id: Optional[int] = None,
 ):
     """Mark a lead as paid. Optionally schedule a recurring service reminder.
@@ -703,19 +788,22 @@ def mark_paid(
                 f" service_reminder_at = date('now', '+{days} days'),"
             )
 
+        amount_clause = "actual_amount = ?," if actual_amount is not None else ""
+        amount_params = (actual_amount,) if actual_amount is not None else ()
         conn.execute(
             f"""
             UPDATE leads
             SET status = 'paid',
                 paid_at = datetime('now'),
                 invoice_reminder_at = NULL,
+                {amount_clause}
                 {svc_fields}
                 last_contact_at = datetime('now'),
                 follow_up_after = NULL,
                 review_reminder_at = COALESCE(review_reminder_at, date('now', '+1 days'))
             {where}
             """,
-            params_base,
+            amount_params + params_base,
         )
         log_event(conn, "lead_paid", user_id=user_id, lead_id=lead_id)
 

@@ -222,6 +222,9 @@
     <span class="nav-icon">&#x1F4E5;</span>Requests
     <span id="requests-badge" style="display:none;position:absolute;top:6px;right:calc(50% - 22px);background:var(--accent);color:#fff;font-size:9px;font-weight:700;border-radius:8px;padding:1px 5px;"></span>
   </button>
+  <button class="nav-item" id="nav-reports" onclick="switchTab('reports')">
+    <span class="nav-icon">&#x1F4CA;</span>Reports
+  </button>
   <button class="nav-item" id="nav-more" onclick="switchTab('more')">
     <span class="nav-icon">&#x2630;</span>More
   </button>
@@ -269,6 +272,12 @@
         </div>
       </div>
       <div id="req-list"><div class="empty">Loading...</div></div>
+    </section>
+  </div>
+  <div class="tab-panel" id="tab-reports">
+    <section>
+      <h2>Business Reports</h2>
+      <div id="reports-content"><div class="empty">Loading...</div></div>
     </section>
   </div>
   <div class="tab-panel" id="tab-more">
@@ -538,7 +547,7 @@ document.querySelectorAll('.sheet-overlay').forEach(el=>{
 
 // Tab switching
 const _lastLoaded={};
-const TAB_NAMES=['today','pipeline','reminders','requests','more'];
+const TAB_NAMES=['today','pipeline','reminders','requests','reports','more'];
 function switchTab(name){
   TAB_NAMES.forEach(t=>{
     const nb=document.getElementById('nav-'+t);
@@ -551,6 +560,7 @@ function switchTab(name){
   if(stale){
     if(name==='today'||name==='pipeline'||name==='reminders')load();
     if(name==='requests')loadRequests();
+    if(name==='reports')loadReports();
     if(name==='more'){loadClosed();loadPilot();loadUsage();loadAvailability();}
     _lastLoaded[name]=now;
   }
@@ -573,7 +583,8 @@ function renderLead(l,opts){
   else if(l.status==='new')alertHtml='<div class="lead-alert" style="color:var(--accent)">🆕 New Lead</div>';
 
   const metaParts=[];
-  if(l.quote_amount)metaParts.push('Quote: '+fmt(l.quote_amount));
+  if(l.actual_amount)metaParts.push('Paid: '+fmt(l.actual_amount));
+  else if(l.quote_amount)metaParts.push('Quote: '+fmt(l.quote_amount));
   if(l.invoice_amount)metaParts.push('Invoice: '+fmt(l.invoice_amount));
   if(l.scheduled_date)metaParts.push('Scheduled: '+l.scheduled_date);
   if(l.paid_at)metaParts.push('Paid: '+l.paid_at);
@@ -596,7 +607,8 @@ function renderLead(l,opts){
       if(!l.invoice_sent_at){
         primaryBtn='<button class="lead-primary-btn" onclick="openInvoice('+l.id+','+(l.quote_amount||0)+')">Send Invoice</button>';
       } else {
-        primaryBtn='<button class="lead-primary-btn" onclick="doPaid('+l.id+')">Mark Paid</button>';
+        primaryBtn='<button class="lead-primary-btn" onclick="doPaid('+l.id+','+(l.quote_amount||'')+')
+">Mark Paid</button>';
       }
       secondaryBtns.push('<button class="btn btn-danger" onclick="openLost('+l.id+')">Lost</button>');
     } else if(l.status==='paid'){
@@ -629,7 +641,8 @@ function renderLead(l,opts){
       da.push('<button class="btn btn-sm btn-danger" onclick="openLost('+l.id+')">Lost</button>');
     } else if(l.status==='completed'){
       if(!l.invoice_sent_at)da.push('<button class="btn btn-sm btn-primary" onclick="openInvoice('+l.id+','+(l.quote_amount||0)+')">Invoice</button>');
-      else da.push('<button class="btn btn-sm btn-primary" onclick="doPaid('+l.id+')">Mark Paid</button>');
+      else da.push('<button class="btn btn-sm btn-primary" onclick="doPaid('+l.id+','+(l.quote_amount||'')+')
+">Mark Paid</button>');
       da.push('<button class="btn btn-sm btn-danger" onclick="openLost('+l.id+')">Lost</button>');
     } else if(l.status==='paid'){
       da.push('<button class="btn btn-sm" onclick="openNextService('+l.id+')">Next Svc</button>');
@@ -995,8 +1008,13 @@ async function submitInvoice(){
 }
 
 // Paid
-async function doPaid(id){
-  const r=await fetch('/api/leads/'+id+'/paid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+async function doPaid(id,prefill){
+  const input=prompt('Amount received'+(prefill?' (pre-filled from quote)':'')+':',prefill||'');
+  if(input===null)return; // cancelled
+  const body={};
+  const val=parseFloat(input);
+  if(!isNaN(val)&&val>=0)body.actual_amount=val;
+  const r=await fetch('/api/leads/'+id+'/paid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok){toast('Marked paid! 🎉');load();}else{toast('Error',true);}
 }
 
@@ -1497,6 +1515,31 @@ async function submitBookRequest(){
 }
 
 // Billing / trial banner
+// Reports
+async function loadReports(){
+  const el=document.getElementById('reports-content');
+  if(!el)return;
+  try{
+    const d=await fetch('/api/reports').then(r=>r.json());
+    if(d.error){el.innerHTML='<div class="empty">'+esc(d.error)+'</div>';return;}
+    function statCard(title,s,showAvg){
+      if(!s.leads_created&&!s.jobs_completed)return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">'
+        +'<div style="font-size:14px;font-weight:600;margin-bottom:8px">'+esc(title)+'</div>'
+        +'<div class="empty" style="margin:0;padding:8px 0">Complete your first job to see stats here</div></div>';
+      let html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">'
+        +'<div style="font-size:14px;font-weight:600;margin-bottom:12px">'+esc(title)+'</div>'
+        +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:12px">'
+        +'<div><div style="font-size:22px;font-weight:700;color:var(--green)">'+fmt(s.revenue_closed)+'</div><div style="font-size:11px;color:var(--muted)">Revenue</div></div>'
+        +'<div><div style="font-size:22px;font-weight:700">'+s.jobs_completed+'</div><div style="font-size:11px;color:var(--muted)">Jobs</div></div>'
+        +'<div><div style="font-size:22px;font-weight:700">'+s.conversion_rate+'%</div><div style="font-size:11px;color:var(--muted)">Conversion</div></div>';
+      if(showAvg)html+='<div><div style="font-size:22px;font-weight:700">'+fmt(s.average_deal_size)+'</div><div style="font-size:11px;color:var(--muted)">Avg Deal</div></div>';
+      html+='</div></div>';
+      return html;
+    }
+    el.innerHTML=statCard('This Month',d.this_month,false)+statCard('Last Month',d.last_month,false)+statCard('All Time',d.all_time,true);
+  }catch(e){el.innerHTML='<div class="empty">Error loading reports.</div>';}
+}
+
 let _requestUrl='';
 function copyRequestUrl(){
   if(!_requestUrl)return;

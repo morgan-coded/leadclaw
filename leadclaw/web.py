@@ -100,9 +100,12 @@ from leadclaw.queries import (
     get_invoice_reminders,
     get_job_today_leads,
     get_lead_by_id,
+    get_overdue_followups,
     get_pipeline_summary,
     get_public_requests,
     get_reactivation_leads,
+    get_report_stats,
+    get_report_stats_all_time,
     get_review_reminders,
     get_service_reminders,
     get_stale_leads,
@@ -677,6 +680,98 @@ def _send_new_request_notification(lead: dict, user_id: int = 1):
         print(f"[NOTIFY] Failed to send owner notification: {exc}", file=sys.stderr)
 
 
+def send_followup_digest(user_id: int) -> bool:
+    """Send a follow-up digest email if there are overdue leads.
+
+    Returns True if an email was sent, False otherwise.
+    Designed to be called from a cron/scheduler — safe to call multiple times per day.
+    """
+    overdue = get_overdue_followups(user_id)
+    if not overdue:
+        return False
+
+    owner = get_user_by_id(user_id)
+    if not owner:
+        return False
+    try:
+        if not owner["notify_new_requests"]:
+            return False
+    except (KeyError, IndexError):
+        pass
+
+    to_email = owner["email"]
+    if not to_email or to_email == "cli@localhost":
+        return False
+
+    app_url = os.environ.get("APP_URL", "http://localhost:7432").rstrip("/")
+    count = len(overdue)
+    subject = f"You have {count} lead{'s' if count != 1 else ''} to follow up on"
+
+    lines = ["These leads are due for follow-up:", ""]
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    for lead in overdue[:10]:
+        name = lead["name"] or "Unknown"
+        service = lead["service"] or ""
+        phone = lead["phone"] or "—"
+        fu_date = str(lead["follow_up_after"])[:10] if lead["follow_up_after"] else today
+        try:
+            days_overdue = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(fu_date, "%Y-%m-%d")).days
+        except (ValueError, TypeError):
+            days_overdue = 0
+        days_str = f"{days_overdue} day{'s' if days_overdue != 1 else ''} overdue" if days_overdue > 0 else "due today"
+        lines.append(f"  • {name} ({service}) — {phone} — {days_str}")
+    if count > 10:
+        lines.append(f"  …and {count - 10} more — check your dashboard")
+    lines += ["", f"Open dashboard: {app_url}/"]
+    body = "\n".join(lines)
+
+    try:
+        resend_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+        if resend_key:
+            import urllib.request as _ureq
+
+            payload = _json.dumps(
+                {"from": _notify_from_email(), "to": [to_email], "subject": subject, "text": body}
+            ).encode()
+            req = _ureq.Request(
+                "https://api.resend.com/emails",
+                data=payload,
+                method="POST",
+                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+            )
+            try:
+                _ureq.urlopen(req, timeout=8)
+                print(f"[DIGEST] Follow-up digest sent to {to_email}", file=sys.stderr)
+                return True
+            except Exception as exc:
+                print(f"[DIGEST] Resend failed: {exc}", file=sys.stderr)
+
+        smtp_host = os.environ.get("SMTP_HOST")
+        if smtp_host:
+            smtp_port = int(os.environ.get("SMTP_PORT", 587))
+            smtp_user = os.environ.get("SMTP_USER", "")
+            smtp_pass = os.environ.get("SMTP_PASS", "")
+            from_addr = _notify_from_email()
+            msg = MIMEText(body, "plain")
+            msg["Subject"] = subject
+            msg["From"] = from_addr
+            msg["To"] = to_email
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=8) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.login(smtp_user, smtp_pass)
+                srv.sendmail(from_addr, [to_email], msg.as_string())
+            print(f"[DIGEST] Follow-up digest sent via SMTP to {to_email}", file=sys.stderr)
+            return True
+
+        # Dev fallback
+        print(f"[DIGEST] {count} overdue leads for {to_email}:\n{body}", file=sys.stderr)
+        return True
+    except Exception as exc:
+        print(f"[DIGEST] Failed to send digest: {exc}", file=sys.stderr)
+        return False
+
+
 def send_pilot_outreach_email(to_email: str, subject: str, body: str) -> bool:
     """
     Send pilot outreach email via Resend API or SMTP.
@@ -1192,6 +1287,7 @@ def _lead_to_dict(row) -> dict:
         "service_address": _safe_col("service_address"),
         "scheduled_time_window": _safe_col("scheduled_time_window"),
         "request_seen_at": _safe_col("request_seen_at"),
+        "actual_amount": _safe_col("actual_amount"),
     }
 
 
@@ -1627,7 +1723,15 @@ def api_paid_lead(lead_id):
             recurring = int(recurring)
         except (ValueError, TypeError):
             return jsonify({"error": "invalid recurring_days"}), 400
-    mark_paid(lead_id, recurring_days=recurring, user_id=current_user.id)
+    actual_amount = data.get("actual_amount")
+    if actual_amount is not None:
+        try:
+            actual_amount = float(actual_amount)
+            if actual_amount < 0:
+                return jsonify({"error": "actual_amount must be >= 0"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "invalid actual_amount"}), 400
+    mark_paid(lead_id, recurring_days=recurring, actual_amount=actual_amount, user_id=current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1790,6 +1894,35 @@ def api_dismiss_reminder():
 def route_api_usage():
     try:
         return jsonify(api_usage(current_user.id))
+    except Exception as e:
+        print(f"API error: {e}", file=sys.stderr)
+        return jsonify({"error": "An internal error occurred"}), 500
+
+
+@app.route("/api/reports")
+@login_required
+@verified_required
+@subscription_required
+def route_api_reports():
+    """Return reporting stats for the current user."""
+    try:
+        now = datetime.utcnow()
+        this_month_start = now.replace(day=1).strftime("%Y-%m-%d")
+        if now.month == 12:
+            next_month_start = now.replace(year=now.year + 1, month=1, day=1).strftime("%Y-%m-%d")
+        else:
+            next_month_start = now.replace(month=now.month + 1, day=1).strftime("%Y-%m-%d")
+        if now.month == 1:
+            last_month_start = now.replace(year=now.year - 1, month=12, day=1).strftime("%Y-%m-%d")
+        else:
+            last_month_start = now.replace(month=now.month - 1, day=1).strftime("%Y-%m-%d")
+
+        uid = current_user.id
+        return jsonify({
+            "this_month": get_report_stats(uid, this_month_start, next_month_start),
+            "last_month": get_report_stats(uid, last_month_start, this_month_start),
+            "all_time": get_report_stats_all_time(uid),
+        })
     except Exception as e:
         print(f"API error: {e}", file=sys.stderr)
         return jsonify({"error": "An internal error occurred"}), 500
@@ -2130,6 +2263,26 @@ def route_api_billing():
 # ---------------------------------------------------------------------------
 
 
+def _run_send_digests():
+    """Send follow-up digest emails for all eligible users."""
+    from leadclaw.db import get_conn
+
+    with get_conn() as conn:
+        users = conn.execute(
+            "SELECT id, email FROM users WHERE email != 'cli@localhost'"
+        ).fetchall()
+
+    processed = 0
+    sent = 0
+    for user_row in users:
+        processed += 1
+        if send_followup_digest(user_row["id"]):
+            sent += 1
+
+    print(f"[DIGEST] Processed {processed} users, sent {sent} digest emails.", file=sys.stderr)
+    return sent
+
+
 def main():
     import argparse
 
@@ -2137,7 +2290,16 @@ def main():
     parser = argparse.ArgumentParser(prog="leadclaw-web", description="LeadClaw web dashboard")
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 7432)))
+    parser.add_argument(
+        "--send-digests",
+        action="store_true",
+        help="Send follow-up digest emails and exit (designed for cron)",
+    )
     args = parser.parse_args()
+
+    if args.send_digests:
+        _run_send_digests()
+        return
 
     if args.host == "0.0.0.0":
         print("WARNING: binding to 0.0.0.0 — ensure this is behind a reverse proxy in production.")

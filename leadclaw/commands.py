@@ -698,6 +698,7 @@ def cmd_export(args):
         "lost_reason",
         "lost_reason_notes",
         "quote_amount",
+        "actual_amount",
         "created_at",
         "last_contact_at",
         "follow_up_after",

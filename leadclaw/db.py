@@ -143,6 +143,8 @@ def init_db():
             "scheduled_time_window TEXT",
             # Feature: new request notifications
             "request_seen_at TEXT",
+            # Feature: mark-paid-with-amount
+            "actual_amount REAL",
         ]
         for col_def in new_columns:
             try:
