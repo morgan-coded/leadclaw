@@ -246,7 +246,9 @@ class User(UserMixin):
         if self.subscription_status == "active":
             return True
         if self.subscription_status == "trialing" and self.trial_ends_at:
-            return self.trial_ends_at > datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+            return self.trial_ends_at > datetime.now(timezone.utc).replace(tzinfo=None).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
         return False
 
     @property
@@ -1090,7 +1092,9 @@ def signup():
     token = secrets.token_urlsafe(32)
     uid = create_user(email, pw_hash, token)
     # Set 14-day trial period
-    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     update_user_stripe(uid, subscription_status="trialing", trial_ends_at=trial_end)
     # Generate request slug for per-user /request/<slug> URL
     slug = secrets.token_urlsafe(8)
@@ -1120,7 +1124,9 @@ def verify_email(token):
     # Set trial if not already set (covers users who signed up before Stripe was added)
     try:
         if not row["trial_ends_at"]:
-            trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+            trial_end = (
+                datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)
+            ).strftime("%Y-%m-%d %H:%M:%S")
             update_user_stripe(row["id"], subscription_status="trialing", trial_ends_at=trial_end)
     except (KeyError, IndexError):
         pass
@@ -2245,9 +2251,7 @@ def _update_subscription_status(stripe_customer_id: str, status: str, sub_obj=No
         if period_end:
             fields["subscription_ends_at"] = datetime.fromtimestamp(
                 period_end, tz=timezone.utc
-            ).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+            ).strftime("%Y-%m-%d %H:%M:%S")
 
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     vals = list(fields.values()) + [stripe_customer_id]

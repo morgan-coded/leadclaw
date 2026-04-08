@@ -57,7 +57,9 @@ def auth_client(client):
     user_id = create_user(email, pw_hash, token)
     verify_user_email(user_id)
     # Set trial
-    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     update_user_stripe(user_id, subscription_status="trialing", trial_ends_at=trial_end)
 
     client.post("/login", data={"email": email, "password": "password123"})
@@ -105,7 +107,9 @@ def test_user_has_active_subscription_trialing():
     """User in trial with future end date has active subscription."""
     from leadclaw.web import User
 
-    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     update_user_stripe(1, subscription_status="trialing", trial_ends_at=trial_end)
     row = get_user_by_id(1)
     user = User(row)
@@ -117,7 +121,9 @@ def test_user_has_active_subscription_expired_trial():
     """User with expired trial does NOT have active subscription."""
     from leadclaw.web import User
 
-    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     update_user_stripe(1, subscription_status="trialing", trial_ends_at=trial_end)
     row = get_user_by_id(1)
     user = User(row)
@@ -149,7 +155,9 @@ def test_trial_days_remaining_calculation():
     """trial_days_remaining should return correct number of days."""
     from leadclaw.web import User
 
-    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=10)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=10)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     update_user_stripe(1, subscription_status="trialing", trial_ends_at=trial_end)
     row = get_user_by_id(1)
     user = User(row)
@@ -210,7 +218,9 @@ def test_subscription_required_blocks_expired_trial(auth_client):
     import leadclaw.web as web_mod
 
     # Set expired trial
-    expired = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    expired = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     update_user_stripe(
         auth_client._test_user_id, subscription_status="trialing", trial_ends_at=expired
     )
@@ -244,7 +254,9 @@ def test_subscription_required_allows_trial(auth_client):
     """When _STRIPE_ENABLED is True and user in active trial, access allowed."""
     import leadclaw.web as web_mod
 
-    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     update_user_stripe(
         auth_client._test_user_id, subscription_status="trialing", trial_ends_at=trial_end
     )
@@ -495,7 +507,9 @@ def test_api_billing_returns_status(auth_client):
 
 def test_api_billing_reflects_trial(auth_client):
     """The /api/billing endpoint shows correct trial info."""
-    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
+    trial_end = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=5)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     update_user_stripe(
         auth_client._test_user_id, subscription_status="trialing", trial_ends_at=trial_end
     )
